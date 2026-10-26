@@ -428,6 +428,9 @@ impl Game<'_> {
         self.ui.chat_screen = Some(screen);
         self.ui.chat_opened = Some(std::time::Instant::now());
         self.screen = Screen::Chat;
+        if let Some(window) = self.window.as_ref() {
+            window.set_ime_allowed(true);
+        }
         self.keys.clear();
         self.left = false;
         self.right = false;
@@ -436,6 +439,9 @@ impl Game<'_> {
     pub(super) fn close_chat(&mut self) {
         self.ui.chat_screen = None;
         self.ui.chat.reset_scroll();
+        if let Some(window) = self.window.as_ref() {
+            window.set_ime_allowed(false);
+        }
         if self.screen == Screen::Chat {
             self.screen = Screen::Playing;
             self.capture(true);

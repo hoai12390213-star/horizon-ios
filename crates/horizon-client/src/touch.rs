@@ -18,6 +18,12 @@ pub struct TouchSettings {
     pub sprint_button: SprintButtonLocation,
     pub joystick_sprint: bool,
     pub edit_layout: bool,
+    /// Keep a separate touch-control layer over the in-game options screen.
+    pub menu_layer: bool,
+    /// Optional physical-key mapping for each built-in touch control.
+    pub bindings: BTreeMap<String, String>,
+    /// User-created key buttons, keyed by their stable id.
+    pub custom_keys: BTreeMap<u8, String>,
     /// Per-control screen-relative position offsets, stored as fractions of width and height.
     pub positions: BTreeMap<String, [f32; 2]>,
 }
@@ -64,6 +70,9 @@ impl Default for TouchSettings {
             sprint_button: SprintButtonLocation::None,
             joystick_sprint: false,
             edit_layout: false,
+            menu_layer: false,
+            bindings: BTreeMap::new(),
+            custom_keys: BTreeMap::new(),
             positions: BTreeMap::new(),
         }
     }
@@ -102,6 +111,22 @@ impl TouchSettings {
                     settings
                         .positions
                         .insert(control.to_owned(), [x.clamp(-0.8, 0.8), y.clamp(-0.8, 0.8)]);
+                }
+                continue;
+            }
+            if let Some(control) = key.trim().strip_prefix("binding.") {
+                settings
+                    .bindings
+                    .insert(control.to_owned(), value.trim().to_owned());
+                continue;
+            }
+            if let Some(id) = key
+                .trim()
+                .strip_prefix("customKey.")
+                .and_then(|value| value.parse::<u8>().ok())
+            {
+                if !value.trim().is_empty() {
+                    settings.custom_keys.insert(id, value.trim().to_owned());
                 }
                 continue;
             }
@@ -146,6 +171,7 @@ impl TouchSettings {
                 }
                 "joystickSprint" => settings.joystick_sprint = value.trim() == "true",
                 "editLayout" => settings.edit_layout = value.trim() == "true",
+                "menuLayer" => settings.menu_layer = value.trim() == "true",
                 _ => {}
             }
         }
@@ -154,7 +180,7 @@ impl TouchSettings {
 
     pub fn serialize(&self) -> String {
         format!(
-            "buttonScale: {:.2}\nlookSensitivity: {:.2}\nmoveMethod: {}\ncontrolStyle: {}\nbuttonOpacity: {:.2}\nsprintButton: {}\njoystickSprint: {}\neditLayout: {}\n{}",
+            "buttonScale: {:.2}\nlookSensitivity: {:.2}\nmoveMethod: {}\ncontrolStyle: {}\nbuttonOpacity: {:.2}\nsprintButton: {}\njoystickSprint: {}\neditLayout: {}\nmenuLayer: {}\n{}{}{}",
             self.button_scale.clamp(0.7, 1.5),
             self.look_sensitivity.clamp(0.25, 2.0),
             match self.move_method {
@@ -173,12 +199,21 @@ impl TouchSettings {
             },
             self.joystick_sprint,
             self.edit_layout,
+            self.menu_layer,
             self.positions
                 .iter()
                 .map(|(control, offset)| format!(
                     "position.{control}: {:.4},{:.4}\n",
                     offset[0], offset[1]
                 ))
+                .collect::<String>(),
+            self.bindings
+                .iter()
+                .map(|(control, key)| format!("binding.{control}: {key}\n"))
+                .collect::<String>(),
+            self.custom_keys
+                .iter()
+                .map(|(id, key)| format!("customKey.{id}: {key}\n"))
                 .collect::<String>(),
         )
     }
@@ -206,6 +241,7 @@ pub enum Control {
     Pause,
     Inventory,
     Hotbar(u8),
+    Custom(u8),
 }
 
 impl Control {
