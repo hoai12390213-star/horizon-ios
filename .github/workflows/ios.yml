@@ -1,112 +1,24 @@
 name: ios
-# Beside it, a `linux` job builds the Linux game from the same push (its own runner, below).
-# Three things, in this order: how much of Horizon compiles for iPhone and iPad, measured on every pull request and
-# every push to main; an unsigned .ipa for the app shell that links the crates which already do; and an unsigned .ipa
-# carrying the game itself, cross-compiled and bundled with no Xcode in the way. Both files are then posted to
-# Discord (repository secret DISCORD_IPA_WEBHOOK), because an artifact no CI can install has to reach a hand some
-# other way. Nothing here is a playable game yet, and the port is unscheduled.
-# The measurement is one line per crate, so that a crate moving from broken to building shows up as a number that
-# changes, and it publishes the archives for the crates that are already iOS-clean. Everything runs in one job on
-# one machine: a matrix would multiply the macOS minutes this repository pays for, and every step shares one
-# target/ cache anyway.
-# Read the tables in the run's summary before deciding what a port costs. The short version, as this workflow
-# measured it on its own runner (macOS 14, rustc stable, 2026-10-24): every crate but two checks clean for
-# aarch64-apple-ios, including the whole simulation (horizon-core, horizon-world: worldgen, NBT, blocks, entities,
-# physics), the asset decoders, the protocol, and the server's own code. The two are the controller stack, and they
-# are the same failure: `horizon-dualsense`, and `horizon-client` with a desktop build's features, both stop in
-# hidapi's build script -- the crate that rumbles a DualSense over USB, which has no business on a phone. Drop the
-# defaults and the client checks clean, features and all: it used to stop inside `arboard`, which treats iOS as a
-# Linux desktop and drags the whole Wayland stack into a phone build, and that is now gated to the four targets with
-# a backend (crates/horizon-client/Cargo.toml).
-# The first .ipa is the shell: crates/horizon-ios is the crate an Objective-C main() calls, and
-# packaging/ios/project.yml is the Xcode project that links it. The second is `horizon-client` built for the target
-# and put in a Payload folder with packaging/ios/GameInfo.plist, because rustc emits an executable and an iPhone
-# loads one. Both are unsigned, so neither installs on a device without signing, and neither has any assets in it.
-# Compiling for a phone and running on one are separate problems, and the tables below say which is which.
 on:
-  push:
-  # Every branch of this fork: each push builds the iPhone app.
-    branches: ['**']
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  # A new push to a pull request replaces its running check; main's runs all finish.
   group: ios-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 env:
   HORIZON_TELEMETRY_URL: "off"
   IOS_TARGET: aarch64-apple-ios
-  # `--release` here with the `fast` profile's codegen (Cargo.toml): the release profile's single codegen unit
-  # compiles every dependency on one core, and its LTO repeats a whole-program pass for each of the eight
-  # artifacts this job links. What these builds answer is whether the code compiles and links for a phone, which
-  # neither setting changes, and the unsigned bundles are test builds, not what players install. Every run uses the
-  # same settings, so pull requests still read main's cache.
+  IPHONEOS_DEPLOYMENT_TARGET: "16.0"
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
   CARGO_PROFILE_RELEASE_LTO: "false"
   CARGO_INCREMENTAL: "0"
-  # The app's own minimum (project.yml), which Xcode exports to its script phases. rustc and cc read it, so a Cargo
-  # build without it is a different build to Cargo: the Xcode step's Cargo phase used to recompile the whole game
-  # for it, and the binary the .ipa carried claimed iOS 10.
-  IPHONEOS_DEPLOYMENT_TARGET: "16.0"
-  # The crates built into the archives below, space-separated. Listing one here is a claim that it is portable, so
-  # each was measured rather than hoped for, and a crate may join only after it passes this workflow's own
-  # per-crate pass on a real Apple toolchain. Deliberately absent, with the reason: horizon-mods, which checks
-  # clean but runs code mods through wasmtime's cranelift JIT, and Apple forbids generating executable code at
-  # runtime (docs/mods.md:129 names wasmi as the no-JIT path, and no interpreter or precompiled one exists in the
-  # workspace yet); horizon-prepare, which also checks clean but shells out to javac and java against the player's
-  # own Minecraft install (crates/horizon-prepare/src/java.rs:5-7), so it can only ever run where a JDK and that
-  # install exist; and horizon-client, which checks clean only with `--no-default-features` and is built as the
-  # game's own executable further down rather than archived for someone else to link. The rest -- horizon-bench,
-  # horizon-friends, horizon-mod-sdk, horizon-port-pack, horizon-relay, horizon-release-sign, horizon-server,
-  # horizon-server-files and horizon-telemetry -- pass the per-crate pass below and have earned their place here
-  # once something on a phone needs what they do: an app shell wants the simulation and the decoders first, and
-  # friends' port mapping, the load bots and the signing keys are not a phone's work.
-  PORTABLE: horizon-core horizon-world horizon-threads horizon-assets horizon-protocol horizon-theme
-
 jobs:
-  # The Linux game from the same push, beside the phone's: the release build with sound and controllers, which
-  # downloads its game files on its first start (crates/horizon-client/src/import/download.rs). Its own runner,
-  # so it costs no macOS minutes and runs while the phone builds.
-  linux:
-    name: linux
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Install the ALSA and udev headers the client links against
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: linux-release
-      - name: Build the game for Linux
-        run: cargo build --release --locked -p horizon-client --bin horizon-client --bin horizon-ctl
-      - name: Pack it
-        run: |
-          set -euo pipefail
-          mkdir -p dist-linux
-          cp target/release/horizon-client target/release/horizon-ctl dist-linux/
-          file dist-linux/horizon-client
-          tar -C dist-linux -czf horizon-linux-x86_64.tar.gz horizon-client horizon-ctl
-      - uses: actions/upload-artifact@v4
-        with:
-          name: horizon-linux-x86_64
-          path: horizon-linux-x86_64.tar.gz
-          retention-days: 7
-          if-no-files-found: error
-
-  portability:
-    # vars.MAC_RUNNER lets the maintainer point this at his own Mac, as release.yml does; a hosted Mac answers
-    # for everyone else. aarch64-apple-ios needs no Xcode project: rustc cross-compiles, and the steps below
-    # check the objects it produced really are arm64 iOS.
+  game-with-launcher:
+    name: horizon-ios-game-with-launcher
     runs-on: ${{ vars.MAC_RUNNER || 'macos-15' }}
-    # Six static archives, twenty-one crate checks, and an Xcode build and link, from a cold cache on the first
-    # run: nothing here is quick, and a run killed at the halfway point reports no portability table at all.
     timeout-minutes: 90
     defaults:
       run:
@@ -115,561 +27,48 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          clean: true
-          # The whole history: the gate below diffs the pull request's base against its head, and both commits
-          # have to be in the checkout for that to work (ci.yml asks for the same thing).
-          fetch-depth: 0
-      - name: Give the launcher its Microsoft sign-in app
-        # HORIZON_MSA_CLIENT_ID is the repository variable the desktop launcher's build reads too: Horizon's own
-        # approved Azure app (docs/microsoft-account.md), public, so a variable and not a secret. Unset, the
-        # launcher says sign-in isn't set up and everything else works.
+      - name: Set up Rust for iOS
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.IOS_TARGET }}
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ios-game-${{ env.IOS_TARGET }}
+      - name: Configure Microsoft sign-in
         env:
           CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
         run: |
           if [ -n "$CLIENT_ID" ]; then
             /usr/libexec/PlistBuddy -c "Set :HorizonMSAClientID $CLIENT_ID" packaging/ios/GameInfo.plist
-            echo "Microsoft sign-in: configured"
-          else
-            echo "Microsoft sign-in: no HORIZON_MSA_CLIENT_ID, the launcher will say it isn't set up"
           fi
-      - name: Does this pull request change anything Rust?
-        if: github.event_name == 'pull_request'
-        id: rust
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 tools/ci/rust_changes.py "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.rust.outputs.required != 'false'
-        with:
-          targets: ${{ env.IOS_TARGET }}
-      - uses: Swatinem/rust-cache@v2
-        if: steps.rust.outputs.required != 'false' && runner.environment == 'github-hosted'
-        with:
-          shared-key: ios-${{ env.IOS_TARGET }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Build the iOS-clean crates as static archives
-        if: steps.rust.outputs.required != 'false'
-        run: |
-          set -euo pipefail
-          mkdir -p dist-ios
-          for name in $PORTABLE; do
-            # One crate per invocation: --crate-type takes a single target, so the workspace cannot be built for
-            # the phone in one command the way release.yml builds the desktop binaries.
-            cargo rustc --release --locked --target "$IOS_TARGET" -p "$name" --lib --crate-type staticlib
-            archive="target/$IOS_TARGET/release/lib${name//-/_}.a"
-            test -s "$archive" || { echo "::error::$name built no archive"; exit 1; }
-            cp "$archive" dist-ios/
-          done
-      # Cargo cross-compiled; this proves what it wrote is arm64 iOS machine code, so a later app shell cannot
-      # discover that an archive was built for the wrong platform after everything else was wired up. The archives
-      # are worth carrying even once that shell exists: an Xcode target links one directly, with no Cargo build of
-      # its own. Each is an ar archive of every object the crate and its dependencies compile to, so it is the whole
-      # program, not a stub. The objects are checked, not the archives: lipo and otool read a Mach-O file, and a .a
-      # is only a container for them.
-      - name: The archives are arm64 iOS code
-        if: steps.rust.outputs.required != 'false'
-        run: |
-          set -euo pipefail
-          {
-            echo '## Archives built for '"$IOS_TARGET"
-            echo
-            echo '| Archive | Objects | Architecture | iOS marker |'
-            echo '|---|---|---|---|'
-          } >> "$GITHUB_STEP_SUMMARY"
-          for archive in dist-ios/*.a; do
-            # `|| true`: grep exits 1 when it counted nothing, and pipefail would turn an empty archive into an
-            # abort before the line below can report it properly.
-            objects=$(ar t "$archive" | grep -c '\.o$' || true)
-            test "$objects" -gt 0 || { echo "::error::$(basename "$archive") holds no objects"; exit 1; }
-            dir=$(mktemp -d)
-            # Three of them, not all: an archive holds every crate linked into it as well (horizon-core's carries
-            # close on four hundred objects), and they all came off one compiler invocation targeting one platform.
-            for member in $(ar t "$archive" | grep '\.o$' | head -3); do
-              ( cd "$dir" && ar x "$GITHUB_WORKSPACE/$archive" "$member" )
-              object="$dir/$member"
-              test -f "$object" || { echo "::error::$(basename "$archive") yielded no $member"; exit 1; }
-              # lipo wants the file before the command, unlike most tools: `lipo file -verify_arch arm64`.
-              lipo "$object" -verify_arch arm64 >/dev/null \
-                || { echo "::error::$(basename "$archive") is not arm64"; exit 1; }
-            done
-            # arm64 Mach-O alone is what a macOS build produces as well, so the platform is what makes this a
-            # check for a phone. rustc marks these objects with LC_VERSION_MIN_IPHONEOS; a toolchain on the newer
-            # scheme records it as LC_BUILD_VERSION with platform 2, which is iOS, and platform 1 would be macOS.
-            # Both spellings are accepted, neither is assumed, and anything else fails the run.
-            marks=$(otool -l "$object")
-            if printf '%s' "$marks" | grep -q LC_VERSION_MIN_IPHONEOS; then
-              description=LC_VERSION_MIN_IPHONEOS
-            elif printf '%s' "$marks" | grep -A3 LC_BUILD_VERSION | grep -qE 'platform +(2|IOS)( |$)'; then
-              description='LC_BUILD_VERSION platform 2'
-            else
-              echo "::error::$(basename "$archive") is not marked iOS; a phone cannot load it"; exit 1
-            fi
-            echo "| \`$(basename "$archive")\` | $objects | arm64 | \`$description\` |" >> "$GITHUB_STEP_SUMMARY"
-            rm -rf "$dir"
-          done
-      - uses: actions/upload-artifact@v4
-        if: steps.rust.outputs.required != 'false'
-        with:
-          name: horizon-ios-aarch64-apple-ios
-          path: dist-ios/
-          retention-days: 3
-          if-no-files-found: error
-
-      # One attempt per crate, on one machine, so a crate that stops compiling is named rather than buried: cargo
-      # gives up at the first failure of the whole graph, which would otherwise report one error and hide the rest.
-      # Nothing here fails the run. The client's failure is the expected state of this repository, and the point is
-      # its size, which the run's summary publishes.
-      - name: Attempt every crate for iPhone and iPad
-        if: steps.rust.outputs.required != 'false'
-        env:
-          ALL: >-
-            horizon-core horizon-world horizon-threads horizon-assets horizon-protocol horizon-theme
-            horizon-bench horizon-friends horizon-relay horizon-mod-sdk horizon-mods horizon-server-files
-            horizon-telemetry horizon-release-sign horizon-port-pack horizon-dualsense horizon-bots
-            horizon-server horizon-prepare horizon-client horizon-ios
-        run: |
-          set -uo pipefail
-          # The one line that says what stopped a crate. Order matters: cargo prints the compiler's individual
-          # errors before the summary naming the crate that failed, and the summary is the useful one, so take it
-          # when it is there (which is why this step runs cargo unquiet). A build script that fails never reaches
-          # that line, so its own summary is next, then the first bare error. The text inside the backticks carries
-          # a version, "ring v0.17.14", so everything up to the closing backtick belongs to the answer. Pipes are
-          # escaped here because the answer is written into a table.
-          first_error() {
-            local log="$1" found
-            for pattern in 'could not compile `[^`]+`' \
-                           'failed to run custom build command for `[^`]+`' \
-                           '^error(\[[A-Z0-9]+\])?: [^|]+'; do
-              found=$(grep -oE "$pattern" "$log" | head -1)
-              if [ -n "$found" ]; then printf '%s' "${found//|/\\|}"; return; fi
-            done
-            printf 'unknown'
-          }
-          {
-            echo '## iOS portability, crate by crate'
-            echo
-            echo 'Compiling is the smaller half of the distance. `horizon-mods` builds and still cannot run on a'
-            echo 'phone (no JIT), and `horizon-prepare` builds and cannot run either (no Java on iOS); the client'
-            echo 'needs a touch input layer that does not exist in any crate, and its assets are not its own files'
-            echo 'but ones a desktop JDK prepares from the player'\''s copy of Minecraft.'
-            echo
-            echo '| Crate | Compiles for '"$IOS_TARGET"' | First error |'
-            echo '|---|---|---|'
-          } >> "$GITHUB_STEP_SUMMARY"
-          pass=0
-          fail=0
-          for name in $ALL; do
-            log="ios-attempt-$name.log"
-            # Not `--lib`: horizon-bots and horizon-server are binaries with no library to build, and asking for
-            # one reports them as failures of the port when they are a mistake in this command. Checking the
-            # package's libraries and binaries is the honest question, and leaves the 275-odd examples and the
-            # test harnesses to the desktop workflow.
-            if cargo check --locked --target "$IOS_TARGET" -p "$name" > "$log" 2>&1; then
-              verdict="yes"
-              pass=$((pass + 1))
-              first='&mdash;'
-            else
-              verdict="no"
-              fail=$((fail + 1))
-              first=$(first_error "$log")
-              echo "::notice::${name} does not compile for ${IOS_TARGET}: ${first}"
-            fi
-            echo "| \`${name}\` | ${verdict} | ${first} |" >> "$GITHUB_STEP_SUMMARY"
-          done
-          {
-            echo
-            echo "**${pass} of $((pass + fail)) crates compile for a phone today.**"
-            echo
-            echo 'The archive artifact carries the subset this project has measured as portable; a crate passing'
-            echo 'above is not a candidate to add to it until its runtime story is written down too.'
-          } >> "$GITHUB_STEP_SUMMARY"
-          # The table above asks every crate with the features a desktop build has. A phone has no libudev to
-          # open a controller and no ALSA (cpal's CoreAudio backend is macOS's, not iOS's), so dropping the
-          # defaults is not a smaller game here but the only shape a phone can be given -- the same flag that
-          # makes the server build. Sound then comes from AVAudioEngine and controllers from GCController,
-          # neither of which any crate does yet, and that is a port, not a compile error.
-          {
-            echo
-            echo '## The game itself, without the features a phone cannot have'
-            echo
-            echo '| Build of `horizon-client` | Compiles for '"$IOS_TARGET"' | First error |'
-            echo '|---|---|---|'
-          } >> "$GITHUB_STEP_SUMMARY"
-          # `mods` is asked too, and the runner says it compiles. That is not code mods working on a phone:
-          # horizon-mods runs them through a JIT, and Apple forbids one outside a browser engine, so the
-          # feature stays off in the app whatever this row says (packaging/ios/README.md). It is here because
-          # the compiler was never the obstacle for mods, and measuring that is this workflow's job.
-          for spec in "no-defaults:--no-default-features" "with-audio:--no-default-features --features audio" "with-mods:--no-default-features --features mods"; do
-            name=${spec%%:*}
-            features=${spec#*:}
-            log="ios-attempt-horizon-client-$name.log"
-            if cargo check --locked --target "$IOS_TARGET" -p horizon-client $features > "$log" 2>&1; then
-              echo "| \`${features}\` | yes | &mdash; |" >> "$GITHUB_STEP_SUMMARY"
-            else
-              first=$(first_error "$log")
-              echo "::notice::horizon-client ${features} does not compile for ${IOS_TARGET}: ${first}"
-              echo "| \`${features}\` | no | ${first} |" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
-      - uses: actions/upload-artifact@v4
-        if: steps.rust.outputs.required != 'false'
-        with:
-          name: horizon-ios-portability-logs
-          path: ios-attempt-*.log
-          # These logs are this step's only output, and the reason it exists: a run weeks from now is compared
-          # against them to show what moving one crate forward actually cost.
-          retention-days: 30
-          if-no-files-found: error
-
-      # The app shell, and the last step because everything above is the measurement this workflow was written
-      # for and must reach the summary even if an Xcode build breaks. packaging/ios/project.yml is an XcodeGen
-      # spec: the repository keeps a text description of the project, and xcodegen writes the .xcodeproj from it
-      # here. The project links one Rust archive, and the app's only job is to call horizon_probe() and print what
-      # Horizon's simulation answers on the device it is running on.
-      # The .ipa is UNSIGNED: it installs on no phone, and saying so is the point of publishing it. What it proves
-      # is the chain -- Cargo's arm64 objects, an Objective-C caller, a linker, a bundle, a Payload archive -- so
-      # that the only thing between this artifact and a hand is a developer certificate, not a toolchain.
-      - name: Build the unsigned .ipa
-        if: steps.rust.outputs.required != 'false'
+      - name: Build the game for iPhone and iPad
+        run: cargo build --release --locked --target "$IOS_TARGET" -p horizon-client --no-default-features --features audio
+      - name: Build and package the game with its launcher
         run: |
           set -euo pipefail
           command -v xcodegen >/dev/null || brew install xcodegen
-          # Two versions this step can only learn by asking, and both decide whether the project file it is about
-          # to generate can be opened: Homebrew installs the newest XcodeGen, and a hosted Mac image answers with
-          # whichever Xcode it happens to select. Name them in the log before anything depends on them agreeing.
-          xcodegen --version
-          xcodebuild -version
-          # The archive the app links, built here rather than added to $PORTABLE: being linked from Objective-C is
-          # this crate's whole job, it has not passed the per-crate pass above on a Mac yet, and no other target
-          # needs it. One staticlib, one app.
-          cargo rustc --release --locked --target "$IOS_TARGET" -p horizon-ios --lib --crate-type staticlib
-          archive="target/$IOS_TARGET/release/libhorizon_ios.a"
-          test -s "$archive" || { echo "::error::horizon-ios built no archive for the app to link"; exit 1; }
-          # From the spec's own directory, which is what $(SRCROOT) in project.yml is written to mean.
           ( cd packaging/ios && xcodegen generate )
-          # -sdk iphoneos, not the simulator: this is a build for the metal in a phone. CODE_SIGNING_ALLOWED=NO
-          # with no identity is what makes it buildable without an Apple account. xcodebuild's own log is left on
-          # the step, because the first few runs of this step will be read by someone debugging a project file.
-          xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
-            -target Horizon -configuration Release -sdk iphoneos -arch arm64 \
+          HORIZON_GAME_PREBUILT=1 xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
+            -target HorizonGame -configuration Release -sdk iphoneos -arch arm64 \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
-            CONFIGURATION_BUILD_DIR="$PWD/build-ios" \
-            build
-          app=build-ios/Horizon.app
-          test -d "$app" || { echo "::error::xcodebuild produced no Horizon.app"; exit 1; }
-          test -x "$app/Horizon" || { echo "::error::Horizon.app carries no executable"; exit 1; }
-          # An .ipa is a zip whose every entry sits under Payload/.
-          rm -rf ipa
-          mkdir -p ipa/Payload
-          cp -a "$app" ipa/Payload/
-          ( cd ipa && zip -qry ../Horizon-unsigned.ipa Payload )
-          test -s Horizon-unsigned.ipa || { echo "::error::no .ipa written"; exit 1; }
-      # The bundle's binary is the file a phone loads, so it gets the same reading as the archives above, plus one
-      # the archives could not give: that the Rust probe is really linked into it, which is the difference between
-      # an archive that was present at link time and one that the app can call.
-      - name: The .ipa is an arm64 iOS bundle with Rust in it
-        if: steps.rust.outputs.required != 'false'
-        run: |
-          set -euo pipefail
-          binary=build-ios/Horizon.app/Horizon
-          lipo "$binary" -verify_arch arm64 || { echo "::error::Horizon is not arm64"; exit 1; }
-          marks=$(otool -l "$binary")
-          if printf '%s' "$marks" | grep -q LC_VERSION_MIN_IPHONEOS; then
-            description=LC_VERSION_MIN_IPHONEOS
-          elif printf '%s' "$marks" | grep -A3 LC_BUILD_VERSION | grep -qE 'platform +(2|IOS)( |$)'; then
-            description='LC_BUILD_VERSION platform 2'
-          else
-            echo "::error::Horizon is not marked iOS; a phone would refuse to load it"; exit 1
-          fi
-          nm "$binary" | grep -q _horizon_probe \
-            || { echo "::error::the app links no Rust: horizon_probe is absent from the binary"; exit 1; }
-          plutil -lint build-ios/Horizon.app/Info.plist >/dev/null
-          bytes=$(stat -f %z Horizon-unsigned.ipa)
-          {
-            echo '## Unsigned .ipa'
-            echo
-            echo "| File | Bytes | Architecture | iOS marker | Rust |"
-            echo '|---|---|---|---|---|'
-            echo "| \`Horizon-unsigned.ipa\` | $bytes | arm64 | \`$description\` | \`_horizon_probe\` linked |"
-            echo
-            echo 'Unsigned, so it installs on no device, and it is not the game: what runs on the phone when'
-            echo 'someone signs this is `crates/horizon-ios`, answering four questions about the device it is on.'
-            echo "Horizon's RNG, its HotSpot-exact math, palette packing and NBT codec, computed on the phone."
-            echo 'The game itself is built below, and its bundle is the artifact after this one.'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        if: steps.rust.outputs.required != 'false'
-        with:
-          name: horizon-ios-unsigned-ipa
-          path: Horizon-unsigned.ipa
-          # Three days, like the archives: this is a check's evidence, not a release, and the next run replaces it.
-          retention-days: 3
-          if-no-files-found: error
-
-      # The game itself, on a phone. Everything above builds an app shell around four probes; this builds
-      # `horizon-client` for `aarch64-apple-ios` and puts the result in a bundle as its own executable.
-      #
-      # It is a `build` and not a `check`, and that is the whole reason for the step: `cargo check` stopped being
-      # the question the moment the crate table said the game type-checks for iOS. A bin's link is where a phone
-      # build finds out whether the frameworks a UIKit app needs are actually on the command line, and checking
-      # never links. It is `--release` for an optimized game, with the job's quicker codegen (see `env`).
-      #
-      # There is no Xcode in this step on purpose. rustc emits an executable, and an .ipa is a zip of a folder
-      # iOS is willing to load, so the bundle is assembled here from packaging/ios/GameInfo.plist. The alternative
-      # was a second XcodeGen target whose only job is to copy a file Xcode was never needed to produce.
-      - name: Build the game itself for iPhone and iPad
-        if: steps.rust.outputs.required != 'false'
-        run: |
-          set -uo pipefail
-          # The same reading as the crate table's, for the same reason: one line for the summary, in a table cell.
-          first_error() {
-            local log="$1" found
-            for pattern in 'could not compile `[^`]+`' \
-                           'failed to run custom build command for `[^`]+`' \
-                           '^error(\[[A-Z0-9]+\])?: [^|]+'; do
-              found=$(grep -oE "$pattern" "$log" | head -1)
-              if [ -n "$found" ]; then printf '%s' "${found//|/\\|}"; return; fi
-            done
-            printf 'unknown'
-          }
-          {
-            echo '## The game, cross-compiled'
-            echo
-            echo '| Built | Links | Architecture | iOS marker | Rust | Frameworks | Icon |'
-            echo '|---|---|---|---|---|---|---|'
-          } >> "$GITHUB_STEP_SUMMARY"
-          log=ios-game-build.log
-          # The defaults minus `controllers` (gilrs and hidapi want libudev; GameController reads pads), with
-          # `audio`: cpal's CoreAudio backend plays through RemoteIO on a phone. The same flags as project.yml's
-          # Cargo phase, so the bundle's executable is the one measured here. See packaging/ios/README.md.
-          if cargo build --release --locked --target "$IOS_TARGET" -p horizon-client \
-              --no-default-features --features audio > "$log" 2>&1; then
-            bin="target/$IOS_TARGET/release/horizon-client"
-            if [ ! -x "$bin" ]; then
-              echo "::error::cargo said the game built and left no executable at $bin"
-              echo '| `horizon-client --no-default-features --features audio` | no | &mdash; | &mdash; | &mdash; | no executable | &mdash; |' \
-                >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
-            # The bundle: a Payload folder, the executable named `Horizon` for CFBundleExecutable to find, the
-            # plist that says what the executable is, and PkgInfo because macOS-era code still asks for it.
-            rm -rf game-payload
-            mkdir -p game-payload/Payload/Horizon.app
-            cp "$bin" game-payload/Payload/Horizon.app/Horizon
-            cp packaging/ios/GameInfo.plist game-payload/Payload/Horizon.app/Info.plist
-            printf 'APPL????' > game-payload/Payload/Horizon.app/PkgInfo
-            # The icon, before the zip. A springboard reads a compiled asset catalog and nothing else, and this
-            # bundle is assembled without Xcode, so actool -- the compiler Xcode calls -- is called directly.
-            # Failure is a warning rather than an error: a bundle with no icon is a cosmetic loss, and a step that
-            # turned it into a red run would hide the link verdict this step exists to report.
-            icon=not-compiled
-            if xcrun --sdk iphoneos actool \
-                --compile "$PWD/game-payload/Payload/Horizon.app" \
-                --platform iphoneos --minimum-deployment-target 16.0 \
-                --target-device iphone --target-device ipad \
-                --app-icon AppIcon \
-                --output-partial-info-plist "$RUNNER_TEMP/game-icon.plist" \
-                --errors --warnings --notices \
-                packaging/ios/Assets.xcassets > "$RUNNER_TEMP/actool.log" 2>&1 \
-               && [ -s game-payload/Payload/Horizon.app/Assets.car ]; then
-              icon=Assets.car
-            else
-              echo "::warning::actool compiled no Assets.car; the bundle will show a placeholder icon"
-              tail -20 "$RUNNER_TEMP/actool.log"
-            fi
-            ( cd game-payload && zip -qry ../Horizon-game-unsigned.ipa Payload )
-            test -s Horizon-game-unsigned.ipa || { echo "::error::no game .ipa written"; exit 1; }
-            # Read the bundle the way the shell's was read: arm64, marked iOS, and Rust really in there. The game
-            # has no C entry point of its own to look for, so the symbol asked for is the crate's own -- mangled,
-            # and present because `main` is the bin's and everything else came from horizon_client.
-            executable=game-payload/Payload/Horizon.app/Horizon
-            arch=no
-            lipo "$executable" -verify_arch arm64 && arch=yes
-            marks=$(otool -l "$executable")
-            if printf '%s' "$marks" | grep -q LC_VERSION_MIN_IPHONEOS; then
-              description=LC_VERSION_MIN_IPHONEOS
-            elif printf '%s' "$marks" | grep -A3 LC_BUILD_VERSION | grep -qE 'platform +(2|IOS)( |$)'; then
-              description='LC_BUILD_VERSION platform 2'
-            else
-              description='absent: a phone would refuse to load this'
-              echo "::error::the game binary carries no iOS load marker"
-            fi
-            rust=no
-            nm "$executable" | grep -q horizon_client && rust=yes
-            # The frameworks are the part no `cargo check` could have told us and the part a phone acts on: an app
-            # that links no UIKit has no application to launch. Counted, and UIKit named, because that is the one
-            # this build cannot ask Xcode to add.
-            frameworks=$(otool -L "$executable")
-            count=$(printf '%s' "$frameworks" | grep -c '\.tbd\|\.dylib' || true)
-            uikit=no
-            printf '%s' "$frameworks" | grep -q 'UIKit.framework' && uikit=yes
-            bytes=$(stat -f %z Horizon-game-unsigned.ipa)
-            echo "| \`horizon-client --no-default-features\` | yes | arm64: $arch | \`$description\` | \`horizon_client\`: $rust | $count, UIKit: $uikit | $icon |" \
-              >> "$GITHUB_STEP_SUMMARY"
-            {
-              echo
-              echo "That bundle is \`Horizon-game-unsigned.ipa\` ($bytes bytes): the executable the game builds,"
-              echo 'in a bundle with the plist the game ships. It is unsigned, so it installs on no phone, and it'
-              echo 'has no assets in it, because CI has no Minecraft jar to prepare and this repository must not'
-              echo 'ship one. Whether a phone handed both draws a frame is the next question, and it is one for a'
-              echo 'device and not for a runner.'
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            first=$(first_error "$log")
-            echo "::notice::the game does not build for ${IOS_TARGET}: ${first}"
-            echo "| \`horizon-client --no-default-features\` | no | &mdash; | &mdash; | &mdash; | ${first} | &mdash; |" \
-              >> "$GITHUB_STEP_SUMMARY"
-          fi
-      - uses: actions/upload-artifact@v4
-        if: steps.rust.outputs.required != 'false'
-        with:
-          name: horizon-ios-game
-          # The bundle when there is one, and the cargo log either way. The log is the half that matters when the
-          # answer is no: a link failure's evidence is the linker's own words, and a step that only uploads on
-          # success would keep exactly the output someone needs to read.
-          path: |
-            Horizon-game-unsigned.ipa
-            ios-game-build.log
-          retention-days: 3
-          if-no-files-found: error
-
-      # The same game in a bundle Xcode builds, which is the half a person with a phone actually needs: signing and
-      # provisioning come from pressing Run, and no shell script here produces either.
-      # packaging/ios/project.yml gives that target a placeholder main.m, a Cargo phase and a post-compile copy, so
-      # this step is the check that the copy really happened -- `cmp` against Cargo's own output, because a bundle
-      # called HorizonGame.app is indistinguishable from one whose executable was never replaced, and only one of
-      # them has a game in it.
-      - name: The Xcode game target wraps the Rust binary
-        if: steps.rust.outputs.required != 'false'
-        run: |
-          set -euo pipefail
-          # The project is regenerated rather than reused: the step above generated it while the spec had one target
-          # in it, and a second target needs a fresh read.
-          ( cd packaging/ios && xcodegen generate )
-          # CODE_SIGNING_ALLOWED=NO, so this proves the bundle's contents and not a signature nobody here holds.
-          # HORIZON_GAME_PREBUILT skips the target's Cargo phase: the step above built the game, and what this step
-          # proves is the bundle around it, so it takes seconds and not the minutes a second Cargo pass costs.
-          log=xcode-game-build.log
-          if ! HORIZON_GAME_PREBUILT=1 xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
-              -target HorizonGame -configuration Release -sdk iphoneos -arch arm64 \
-              CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
-              CONFIGURATION_BUILD_DIR="$PWD/build-ios" \
-              build > "$log" 2>&1; then
-            echo "::error::xcodebuild could not build the game target"
-            tail -40 "$log"
-            exit 1
-          fi
+            CONFIGURATION_BUILD_DIR="$PWD/build-ios" build
           app=build-ios/HorizonGame.app
-          test -d "$app" || { echo "::error::the game target produced no HorizonGame.app"; exit 1; }
-          # The claim of the whole target, checked byte for byte.
-          cmp "$app/Horizon" "target/$IOS_TARGET/release/horizon-client" \
-            || { echo "::error::HorizonGame.app's executable is not the Rust game: the copy phase did not stick"; exit 1; }
-          # The icon and the plist, both produced by the toolchain this time rather than by hand: a mistake in
-          # project.yml shows up here, and not on somebody's home screen.
-          test -s "$app/Assets.car" || { echo "::error::the game target compiled no Assets.car"; exit 1; }
+          test -d "$app"
+          test -x "$app/Horizon"
+          cmp "$app/Horizon" "target/$IOS_TARGET/release/horizon-client"
+          test -s "$app/Assets.car"
+          test -x "$app/Frameworks/HorizonLauncherKit.framework/HorizonLauncherKit"
           bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
-          [ "$bundle" = dev.horizon.game ] \
-            || { echo "::error::the game target's bundle id is $bundle, not dev.horizon.game"; exit 1; }
-          plutil -lint "$app/Info.plist" >/dev/null
-          # The launcher is in, and this bundle -- not the hand-assembled one above -- becomes the game .ipa that
-          # goes out: it is the only one with the launcher (a Swift framework, which only Xcode builds) in it.
-          test -x "$app/Frameworks/HorizonLauncherKit.framework/HorizonLauncherKit" \
-            || { echo "::error::the game target embedded no HorizonLauncherKit.framework"; exit 1; }
-          rm -rf game-xcode Horizon-game-unsigned.ipa
+          test "$bundle" = dev.horizon.game
+          plutil -lint "$app/Info.plist"
           mkdir -p game-xcode/Payload
           cp -a "$app" game-xcode/Payload/
-          ( cd game-xcode && zip -qry ../Horizon-game-unsigned.ipa Payload )
-          test -s Horizon-game-unsigned.ipa || { echo "::error::no game .ipa written from the Xcode bundle"; exit 1; }
-          {
-            echo
-            echo '## The game target in Xcode'
-            echo
-            echo '| Bundle | Executable | Icon | Bundle id |'
-            echo '|---|---|---|---|'
-            echo "| \`HorizonGame.app\` | byte for byte Cargo's \`horizon-client\` | \`Assets.car\` | \`$bundle\` |"
-            echo
-            echo 'Open `packaging/ios/HorizonIOS.xcodeproj`, pick the **Horizon game** scheme and your phone, sign'
-            echo 'with your own Apple ID and press Run: the target builds the game with Cargo, replaces its own'
-            echo 'placeholder executable with the result, and Xcode signs whatever is left.'
-          } >> "$GITHUB_STEP_SUMMARY"
-
+          ( cd game-xcode && zip -qry ../Horizon-game-with-launcher.ipa Payload )
+          test -s Horizon-game-with-launcher.ipa
       - uses: actions/upload-artifact@v4
-        if: steps.rust.outputs.required != 'false'
         with:
           name: horizon-ios-game-with-launcher
-          path: Horizon-game-unsigned.ipa
+          path: Horizon-game-with-launcher.ipa
           retention-days: 3
           if-no-files-found: error
-
-      # Both .ipa files are unsigned, so the only thing that can do anything with either is a person holding a
-      # signing certificate and the device. This step closes that distance: it posts whatever bundles the run built
-      # to a Discord channel, so watching the port is one notification instead of an artifact page, two downloads
-      # and a memory for which is which.
-      #
-      # The webhook lives in the repository secret DISCORD_IPA_WEBHOOK and not in this file, for the reason
-      # packaging/macos/README.md gives for the signing keychain: nothing secret goes in the repository, and a
-      # webhook URL is a credential -- anyone who reads one can post as this build. A fork without the secret gets
-      # a skipped step and a green run, because the portability tables above are the measurement this workflow
-      # exists for and they must not depend on someone's channel.
-      - name: Send the .ipa files to Discord
-        if: steps.rust.outputs.required != 'false' && env.DISCORD_IPA_WEBHOOK != ''
-        env:
-          DISCORD_IPA_WEBHOOK: ${{ secrets.DISCORD_IPA_WEBHOOK }}
-        run: |
-          set -uo pipefail
-          posts=()
-          number=0
-          for bundle in Horizon-unsigned.ipa Horizon-game-unsigned.ipa; do
-            [ -s "$bundle" ] || continue
-            # Never post Mojang's files. Neither bundle should carry any, because CI has no jar to prepare assets
-            # from, and this is the check that keeps that a fact rather than a hope: `horizon-resources.json` is
-            # the marker Options::read looks for beside the executable, so a bundle containing it is a bundle of
-            # prepared vanilla content. The repository already refuses to commit those (.githooks,
-            # tools/check_public_tree.py); posting one to a public channel is the same mistake with a wider
-            # audience and no git history to hide it in.
-            if unzip -l "$bundle" | grep -q horizon-resources.json; then
-              echo "::error::$bundle carries prepared vanilla assets; refusing to post it"
-              continue
-            fi
-            # Discord's multipart fields are file, file2, file3 -- not a repeated `file`. Numbering them here is
-            # what makes a run that built one bundle and a run that built two share this step.
-            number=$((number + 1))
-            field=file
-            [ "$number" -gt 1 ] && field="file$number"
-            posts+=(-F "$field=@$bundle;type=application/octet-stream")
-          done
-          if [ "$number" -eq 0 ]; then
-            echo 'This run built no .ipa to post.'
-            exit 0
-          fi
-          # The URL is the secret, so it is never echoed: curl's status code is asked for with -w and its body goes
-          # to a file, which is read only on the failure path and only after tokens are rubbed out.
-          # printf rather than a multi-line assignment: every continuation line of the latter would carry this
-          # step's own indentation into the message a person reads on their phone.
-          content=$(printf '%s\n' \
-            "**Horizon for iPhone and iPad, run #${GITHUB_RUN_NUMBER}**" \
-            "\`${GITHUB_REF_NAME}@${GITHUB_SHA::7}\`: $number unsigned .ipa, so nothing installs until someone signs it, and neither bundle carries assets" \
-            "🤖 Posted by heyskylo's AI agent (Qoder) from \`.github/workflows/ios.yml\`, not by a person.")
-          response=$(mktemp)
-          code=$(curl -sS -o "$response" -w '%{http_code}' -X POST "$DISCORD_IPA_WEBHOOK" \
-            -F "content=$content" "${posts[@]}")
-          case "$code" in
-            2*)
-              echo "Posted $number unsigned .ipa to Discord (HTTP $code)."
-              {
-                echo
-                echo "## Posted to Discord"
-                echo
-                echo "$number unsigned .ipa file(s), run \`#${GITHUB_RUN_NUMBER}\`, HTTP \`$code\`."
-              } >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            *)
-              echo "::error::Discord refused the files (HTTP $code)"
-              sed -E 's/[A-Za-z0-9_-]{16,}/***masked***/g' "$response" | head -c 400
-              exit 1
-              ;;
-          esac
-          rm -f "$response"
-
