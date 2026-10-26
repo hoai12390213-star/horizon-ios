@@ -234,10 +234,10 @@ impl Game<'_> {
                     finger.at = at;
                 }
             }
-            TouchPhase::Ended | TouchPhase::Cancelled => {
-                if self.touch.editor.as_ref().is_some_and(|f| f.id == id) {
-                    self.touch.editor = None;
-                }
+            TouchPhase::Ended | TouchPhase::Cancelled
+                if self.touch.editor.as_ref().is_some_and(|f| f.id == id) =>
+            {
+                self.touch.editor = None;
             }
             _ => {}
         }
