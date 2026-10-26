@@ -34,7 +34,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ios-game-${{ env.IOS_TARGET }}
+          shared-key: ios-${{ env.IOS_TARGET }}
       - name: Configure Microsoft sign-in
         env:
           CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
