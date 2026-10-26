@@ -52,7 +52,7 @@ between this bundle and a playable one:
 |---|---|---|
 | Assets | `horizon-prepare` runs a JDK against the player's own Minecraft install to produce `.local/horizon-client/26.3`; there is no Java on iOS | Prepare off-device, download to the phone |
 | Mods | `horizon-mods` runs them through wasmtime's cranelift JIT, and Apple forbids generating executable code at runtime (`docs/mods.md`) -- note the runner says the `mods` *feature compiles*, which is about the compiler and not about running | Disabled on iOS |
-| Input | the client's winit loop is desktop-shaped: cursor-warp mouse look, no touch | A touch layer, in no crate yet |
+| Input | the client's winit loop is desktop-shaped: cursor-warp mouse look | Native D-pad/joystick, touch interaction and layout controls in `horizon-client` |
 | Sound, controllers | `hidapi`/`gilrs` need libudev or IOKit, which is what `--no-default-features` drops and why the phone build asks for that flag; `cpal` (the `audio` feature) has a CoreAudio backend for iOS too, through RemoteIO | `--features audio` on the phone, with the launcher setting up the audio session; `GCController` for pads |
 
 So this app runs the half that was already portable before the client was: `horizon-core`'s Java-accurate RNG
@@ -79,8 +79,8 @@ bundle id is `dev.horizon.game`, so the two install side by side. `GameInfo.plis
 
 What that bundle cannot do yet, in the order it will be found: it has **no assets** (CI has no Minecraft jar to run
 `horizon-prepare` against, and this repository must not ship one; `UIFileSharingEnabled` in the plist is the
-deliberate door for the player to put the prepared folder where the game looks), and **no touch input** -- the first
-frame may be the whole show until something turns a tap into a key. The game starts in `$HOME/Documents`, which is
+deliberate door for the player to put the prepared folder where the game looks). Touch controls are built into the
+Rust client; the game starts in `$HOME/Documents`, which is
 why `saves/`, `options.txt` and `.horizon-cache` are where a player can reach them; see `crates/horizon-client/src/main.rs`
 `into_app_sandbox`.
 

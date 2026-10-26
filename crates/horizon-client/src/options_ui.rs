@@ -100,6 +100,14 @@ pub enum Opt {
     PadGlyphs,
     PadMenuNav,
     PadKeyboard,
+    TouchButtonSize,
+    TouchLookSensitivity,
+    TouchMoveMethod,
+    TouchControlStyle,
+    TouchButtonOpacity,
+    TouchSprintButton,
+    TouchJoystickSprint,
+    TouchEditLayout,
 }
 fn tr(key: &str) -> Text {
     Text::translate(key, &[])
@@ -282,6 +290,14 @@ impl Opt {
             Opt::PadGlyphs => "horizon.options.button_glyphs",
             Opt::PadMenuNav => "horizon.options.menu_navigation",
             Opt::PadKeyboard => "horizon.options.on_screen_keyboard",
+            Opt::TouchButtonSize => "Touch Button Size",
+            Opt::TouchLookSensitivity => "Touch Look Sensitivity",
+            Opt::TouchMoveMethod => "Touch Movement",
+            Opt::TouchControlStyle => "Touch Interaction",
+            Opt::TouchButtonOpacity => "Touch Button Opacity",
+            Opt::TouchSprintButton => "Touch Sprint Button",
+            Opt::TouchJoystickSprint => "Joystick Sprint",
+            Opt::TouchEditLayout => "Edit Touch Layout",
         }
     }
     pub(crate) fn kind(self, s: &Settings) -> Kind {
@@ -324,6 +340,9 @@ impl Opt {
             Opt::ChatHeightUnfocused => Kind::Slider(s.chat_height_unfocused),
             Opt::ChatLineSpacing => Kind::Slider(s.chat_line_spacing),
             Opt::PadLookSensitivity => Kind::Slider(s.controller.look_sensitivity),
+            Opt::TouchButtonSize => Kind::Slider((s.touch.button_scale - 0.7) / 0.8),
+            Opt::TouchLookSensitivity => Kind::Slider((s.touch.look_sensitivity - 0.25) / 1.75),
+            Opt::TouchButtonOpacity => Kind::Slider((s.touch.button_opacity - 0.2) / 0.8),
             Opt::PadMoveDeadzone => unit(s.controller.move_deadzone, 0.0, 0.5),
             Opt::PadLookDeadzone => unit(s.controller.look_deadzone, 0.0, 0.5),
             _ => Kind::Cycle,
@@ -488,6 +507,24 @@ impl Opt {
                 ),
             ),
             Opt::PadLookSensitivity => percent(c, 2.0 * s.controller.look_sensitivity),
+            Opt::TouchButtonSize => percent(c, s.touch.button_scale),
+            Opt::TouchLookSensitivity => percent(c, s.touch.look_sensitivity),
+            Opt::TouchMoveMethod => Text::literal(match s.touch.move_method {
+                crate::touch::MoveMethod::Dpad => "D-pad",
+                crate::touch::MoveMethod::Joystick => "Joystick",
+            }),
+            Opt::TouchControlStyle => Text::literal(match s.touch.control_style {
+                crate::touch::ControlStyle::TouchGesture => "Touch Gesture",
+                crate::touch::ControlStyle::SplitControls => "Split Controls",
+            }),
+            Opt::TouchButtonOpacity => percent(c, s.touch.button_opacity),
+            Opt::TouchSprintButton => Text::literal(match s.touch.sprint_button {
+                crate::touch::SprintButtonLocation::None => "Off",
+                crate::touch::SprintButtonLocation::Right => "Right",
+                crate::touch::SprintButtonLocation::RightTop => "Right Top",
+            }),
+            Opt::TouchJoystickSprint => on_off(s.touch.joystick_sprint),
+            Opt::TouchEditLayout => on_off(s.touch.edit_layout),
             Opt::PadMoveDeadzone | Opt::PadLookDeadzone => {
                 let v = if self == Opt::PadMoveDeadzone {
                     s.controller.move_deadzone
@@ -655,6 +692,9 @@ impl Opt {
             Opt::ChatHeightUnfocused => s.chat_height_unfocused = v,
             Opt::ChatLineSpacing => s.chat_line_spacing = v,
             Opt::PadLookSensitivity => s.controller.look_sensitivity = v,
+            Opt::TouchButtonSize => s.touch.button_scale = 0.7 + v * 0.8,
+            Opt::TouchLookSensitivity => s.touch.look_sensitivity = 0.25 + v * 1.75,
+            Opt::TouchButtonOpacity => s.touch.button_opacity = 0.2 + v * 0.8,
             Opt::PadMoveDeadzone => s.controller.move_deadzone = step(0.0, 50.0) / 100.0,
             Opt::PadLookDeadzone => s.controller.look_deadzone = step(0.0, 50.0) / 100.0,
             _ => {}
@@ -786,6 +826,37 @@ impl Opt {
                     .unwrap_or(0) as u8;
                 s.controller.keyboard = all[usize::from(next(i, 3))];
             }
+            Opt::TouchMoveMethod => {
+                s.touch.move_method = match s.touch.move_method {
+                    crate::touch::MoveMethod::Dpad => crate::touch::MoveMethod::Joystick,
+                    crate::touch::MoveMethod::Joystick => crate::touch::MoveMethod::Dpad,
+                }
+            }
+            Opt::TouchControlStyle => {
+                s.touch.control_style = match s.touch.control_style {
+                    crate::touch::ControlStyle::TouchGesture => {
+                        crate::touch::ControlStyle::SplitControls
+                    }
+                    crate::touch::ControlStyle::SplitControls => {
+                        crate::touch::ControlStyle::TouchGesture
+                    }
+                }
+            }
+            Opt::TouchSprintButton => {
+                s.touch.sprint_button = match s.touch.sprint_button {
+                    crate::touch::SprintButtonLocation::None => {
+                        crate::touch::SprintButtonLocation::Right
+                    }
+                    crate::touch::SprintButtonLocation::Right => {
+                        crate::touch::SprintButtonLocation::RightTop
+                    }
+                    crate::touch::SprintButtonLocation::RightTop => {
+                        crate::touch::SprintButtonLocation::None
+                    }
+                }
+            }
+            Opt::TouchJoystickSprint => s.touch.joystick_sprint = !s.touch.joystick_sprint,
+            Opt::TouchEditLayout => s.touch.edit_layout = !s.touch.edit_layout,
             _ => {}
         }
         if self.affects_preset() {
@@ -1481,6 +1552,16 @@ impl OptionsUi {
                     Opt::ToggleCrouch,
                     Opt::ToggleSprint,
                     Opt::AutoJump,
+                ]));
+                rows.extend(pairs(&[
+                    Opt::TouchButtonSize,
+                    Opt::TouchLookSensitivity,
+                    Opt::TouchMoveMethod,
+                    Opt::TouchControlStyle,
+                    Opt::TouchButtonOpacity,
+                    Opt::TouchSprintButton,
+                    Opt::TouchJoystickSprint,
+                    Opt::TouchEditLayout,
                 ]));
                 // Horizon's controller page, after vanilla's rows.
                 rows.push(Row::Buttons(

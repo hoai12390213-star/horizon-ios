@@ -6,7 +6,7 @@ use super::{Game, Screen};
 use horizon_client::{
     Result,
     hud::{HudBatch, rgba},
-    touch::{self, Control, Out, Touches},
+    touch::{self, Control, ControlStyle, Out, RideKind, Touches},
 };
 use std::time::Instant;
 use winit::{
@@ -35,7 +35,17 @@ pub(super) struct TouchInput {
     /// The button a finger held still on the world is holding down: attack to mine, or use to eat, drink or
     /// draw a bow.
     holding: Option<MouseButton>,
+    /// Active virtual joystick vector; `Some([0, 0])` still owns movement input.
+    movement: Option<[f32; 2]>,
+    joystick_sprinting: bool,
+    editor: Option<LayoutFinger>,
     clock: Option<Instant>,
+}
+
+struct LayoutFinger {
+    id: u64,
+    control: Control,
+    at: (f32, f32),
 }
 
 /// A finger over a menu. Its press waits for a frame drawn with the pointer under it, and its release for a
@@ -61,11 +71,19 @@ fn key_of(control: Control) -> Option<KeyCode> {
         Control::Left => KeyCode::KeyA,
         Control::Right => KeyCode::KeyD,
         Control::Jump => KeyCode::Space,
+        Control::Ascend => KeyCode::Space,
+        Control::Descend => KeyCode::ShiftLeft,
+        Control::Dismount => KeyCode::ShiftLeft,
+        Control::Sprint => KeyCode::ControlLeft,
         Control::Perspective => KeyCode::F5,
         Control::Chat => KeyCode::KeyT,
         Control::Pause => KeyCode::Escape,
         Control::Inventory => KeyCode::KeyE,
-        Control::Sneak | Control::Hotbar(_) => return None,
+        Control::Sneak
+        | Control::Attack
+        | Control::Use
+        | Control::Joystick
+        | Control::Hotbar(_) => return None,
     })
 }
 
@@ -93,6 +111,45 @@ impl Game<'_> {
             && self.player.is_some()
     }
 
+    fn touch_vertical(&self) -> bool {
+        self.player
+            .as_ref()
+            .is_some_and(|player| player.flying || player.fluids.was_touching_water)
+    }
+
+    fn touch_layout(&self, width: f32, height: f32) -> Vec<(Control, touch::Rect)> {
+        let ride = self.riding.map_or(RideKind::None, |id| {
+            if self.boats.iter().any(|boat| boat.id == id) {
+                RideKind::Boat
+            } else if self.carts.iter().any(|cart| cart.id == id) {
+                RideKind::Minecart
+            } else {
+                RideKind::Mount
+            }
+        });
+        let mut layout = touch::layout_configured(
+            width,
+            height,
+            self.settings.touch.button_scale,
+            self.touch_vertical(),
+            self.settings.touch.move_method,
+            self.settings.touch.control_style,
+            ride,
+            self.settings.touch.sprint_button,
+        );
+        for (control, rect) in &mut layout {
+            if let Some(offset) = self.settings.touch.positions.get(&control.layout_key()) {
+                rect[0] = (rect[0] + offset[0] * width).clamp(0.0, (width - rect[2]).max(0.0));
+                rect[1] = (rect[1] + offset[1] * height).clamp(0.0, (height - rect[3]).max(0.0));
+            }
+        }
+        layout
+    }
+
+    pub(super) fn touch_move(&self) -> Option<[f32; 2]> {
+        self.touch.movement
+    }
+
     /// The controls are on screen: after a touch, from the start on iPhone and iPad, or with `HORIZON_TOUCH=1`
     /// (laying them out on a computer).
     fn touch_shown(&self) -> bool {
@@ -116,7 +173,19 @@ impl Game<'_> {
             self.touch_menu(event_loop, touch.id, touch.phase, at);
             return Ok(());
         }
-        let layout = touch::layout(batch.width, batch.height);
+        let layout = self.touch_layout(batch.width, batch.height);
+        if self.settings.touch.edit_layout {
+            self.touch_edit_event(
+                touch.id,
+                touch.phase,
+                at,
+                &layout,
+                batch.width,
+                batch.height,
+            );
+            return Ok(());
+        }
+        let cancelled = touch.phase == TouchPhase::Cancelled;
         let out = match touch.phase {
             TouchPhase::Started => {
                 let now = self.touch_now();
@@ -125,7 +194,53 @@ impl Game<'_> {
             TouchPhase::Moved => self.touch.fingers.moved(touch.id, at, &layout),
             TouchPhase::Ended | TouchPhase::Cancelled => self.touch.fingers.end(touch.id),
         };
+        let out = if cancelled {
+            out.into_iter()
+                .filter(|action| *action != Out::Tap)
+                .collect()
+        } else {
+            out
+        };
         self.touch_act(out, batch.scale)
+    }
+
+    fn touch_edit_event(
+        &mut self,
+        id: u64,
+        phase: TouchPhase,
+        at: (f32, f32),
+        layout: &[(Control, touch::Rect)],
+        width: f32,
+        height: f32,
+    ) {
+        match phase {
+            TouchPhase::Started if self.touch.editor.is_none() => {
+                if let Some(control) = touch::hit(layout, at) {
+                    self.touch.editor = Some(LayoutFinger { id, control, at });
+                }
+            }
+            TouchPhase::Moved => {
+                if let Some(finger) = self.touch.editor.as_mut().filter(|f| f.id == id) {
+                    let dx = (at.0 - finger.at.0) / width.max(1.0);
+                    let dy = (at.1 - finger.at.1) / height.max(1.0);
+                    let offset = self
+                        .settings
+                        .touch
+                        .positions
+                        .entry(finger.control.layout_key())
+                        .or_insert([0.0, 0.0]);
+                    offset[0] = (offset[0] + dx).clamp(-0.8, 0.8);
+                    offset[1] = (offset[1] + dy).clamp(-0.8, 0.8);
+                    finger.at = at;
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                if self.touch.editor.as_ref().is_some_and(|f| f.id == id) {
+                    self.touch.editor = None;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Once a frame: a held finger starts mining, held-back clicks release, and a screen that opened over the
@@ -208,6 +323,33 @@ impl Game<'_> {
                         self.mapped_key(KeyCode::ShiftLeft, !sneaking, false)?;
                     }
                 }
+                Out::Press(Control::Attack) => {
+                    self.touch_grab();
+                    self.play_mouse(MouseButton::Left, true)?;
+                }
+                Out::Release(Control::Attack) => self.play_mouse(MouseButton::Left, false)?,
+                Out::Press(Control::Use) => {
+                    self.touch_grab();
+                    self.play_mouse(MouseButton::Right, true)?;
+                }
+                Out::Release(Control::Use) => self.play_mouse(MouseButton::Right, false)?,
+                Out::Move(vector) => {
+                    self.touch.movement = Some(vector);
+                    if self.settings.touch.joystick_sprint {
+                        let sprinting = vector[1] < -0.82;
+                        if sprinting != self.touch.joystick_sprinting {
+                            self.mapped_key(KeyCode::ControlLeft, sprinting, false)?;
+                            self.touch.joystick_sprinting = sprinting;
+                        }
+                    }
+                }
+                Out::MoveEnd => {
+                    self.touch.movement = None;
+                    if self.touch.joystick_sprinting {
+                        self.mapped_key(KeyCode::ControlLeft, false, false)?;
+                        self.touch.joystick_sprinting = false;
+                    }
+                }
                 Out::Press(control) | Out::Release(control) => {
                     if let Some(key) = key_of(control) {
                         self.mapped_key(key, matches!(o, Out::Press(_)), false)?;
@@ -215,12 +357,19 @@ impl Game<'_> {
                 }
                 Out::Look(dx, dy) => {
                     self.touch_grab();
-                    let (dx, dy) = (f64::from(dx * scale), f64::from(dy * scale));
+                    let sensitivity = self.settings.touch.look_sensitivity;
+                    let (dx, dy) = (
+                        f64::from(dx * scale * sensitivity),
+                        f64::from(dy * scale * sensitivity),
+                    );
                     // Relative motion, as an agent's `mouse-move` adds it: no pointer position to compare with.
                     self.mouse.add_motion(dx, dy);
                 }
                 // Pocket Edition: a tap hits the entity it is on, and uses the item or block otherwise.
                 Out::Tap => {
+                    if self.settings.touch.control_style == ControlStyle::SplitControls {
+                        continue;
+                    }
                     self.touch_grab();
                     let button = if self.entity_targeted() {
                         MouseButton::Left
@@ -234,6 +383,9 @@ impl Game<'_> {
                 // used for as long as they are held (a bow, a shield...) are used until the finger lifts;
                 // anything else mines.
                 Out::MineStart => {
+                    if self.settings.touch.control_style == ControlStyle::SplitControls {
+                        continue;
+                    }
                     self.touch_grab();
                     let button = if self.touch_holds_use() {
                         MouseButton::Right
@@ -244,6 +396,9 @@ impl Game<'_> {
                     self.play_mouse(button, true)?;
                 }
                 Out::MineEnd => {
+                    if self.settings.touch.control_style == ControlStyle::SplitControls {
+                        continue;
+                    }
                     let button = self.touch.holding.take().unwrap_or(MouseButton::Left);
                     self.play_mouse(button, false)?;
                 }
@@ -421,12 +576,46 @@ impl Game<'_> {
             return;
         }
         let atlas = &self.gui.atlas;
-        for (control, r) in touch::layout(batch.width, batch.height) {
+        for (control, r) in self.touch_layout(batch.width, batch.height) {
             if matches!(control, Control::Hotbar(_)) {
                 continue;
             }
-            touch_button(batch, atlas, r, self.touch.fingers.held(control));
-            shadowed(r, |r, color| glyph(batch, atlas, control, r, color));
+            if control == Control::Joystick {
+                touch_button(
+                    batch,
+                    atlas,
+                    r,
+                    self.touch.movement.is_some(),
+                    self.settings.touch.button_opacity,
+                );
+                let vector = self.touch.movement.unwrap_or([0.0, 0.0]);
+                let knob = r[2] * 0.42;
+                let travel = (r[2] - knob) / 2.0;
+                let knob_rect = [
+                    r[0] + travel + -vector[0] * travel,
+                    r[1] + travel + -vector[1] * travel,
+                    knob,
+                    knob,
+                ];
+                touch_button(
+                    batch,
+                    atlas,
+                    knob_rect,
+                    true,
+                    self.settings.touch.button_opacity,
+                );
+                continue;
+            }
+            touch_button(
+                batch,
+                atlas,
+                r,
+                self.touch.fingers.held(control),
+                self.settings.touch.button_opacity,
+            );
+            shadowed(r, self.settings.touch.button_opacity, |r, color| {
+                glyph(batch, atlas, control, r, color)
+            });
         }
     }
 }
@@ -440,8 +629,8 @@ impl Game<'_> {
         let atlas = &self.gui.atlas;
         if self.touch_close_shown() {
             let r = touch::close_rect(batch.width, batch.height);
-            touch_button(batch, atlas, r, held);
-            shadowed(r, |r, color| {
+            touch_button(batch, atlas, r, held, self.settings.touch.button_opacity);
+            shadowed(r, self.settings.touch.button_opacity, |r, color| {
                 // Two diagonals of cells.
                 let u = cell_size(r);
                 let (cx, cy) = ((r[0] + r[2] / 2.0).floor(), (r[1] + r[3] / 2.0).floor());
@@ -454,8 +643,8 @@ impl Game<'_> {
         }
         if keyboard {
             let r = touch::keyboard_rect(batch.width, batch.height);
-            touch_button(batch, atlas, r, false);
-            shadowed(r, |r, color| {
+            touch_button(batch, atlas, r, false, self.settings.touch.button_opacity);
+            shadowed(r, self.settings.touch.button_opacity, |r, color| {
                 // A keyboard: two rows of keys over a space bar.
                 let u = cell_size(r) * 0.75;
                 let (cx, cy) = ((r[0] + r[2] / 2.0).floor(), (r[1] + r[3] / 2.0).floor());
@@ -479,13 +668,19 @@ fn touch_button(
     atlas: &horizon_client::hud::HudAtlas,
     r: touch::Rect,
     held: bool,
+    opacity: f32,
 ) {
     let sprite = if held {
         "gui/sprites/widget/button_highlighted"
     } else {
         "gui/sprites/widget/button"
     };
-    let alpha = if held { 230 } else { 170 };
+    let alpha = ((if held {
+        230.0
+    } else {
+        255.0 * opacity.clamp(0.2, 1.0)
+    }) as u8)
+        .max(1);
     horizon_client::ui::nine_slice(
         batch,
         atlas,
@@ -504,10 +699,14 @@ fn cell_size(r: touch::Rect) -> f32 {
 }
 
 /// Draw a mark twice, as Minecraft draws text: a dark copy a little down and right, then the white one.
-fn shadowed(r: touch::Rect, mut mark: impl FnMut(touch::Rect, u32)) {
+fn shadowed(r: touch::Rect, opacity: f32, mut mark: impl FnMut(touch::Rect, u32)) {
     let off = (cell_size(r) / 2.0).max(1.0);
-    mark([r[0] + off, r[1] + off, r[2], r[3]], rgba(63, 63, 63, 230));
-    mark(r, rgba(255, 255, 255, 240));
+    let opacity = opacity.clamp(0.2, 1.0);
+    mark(
+        [r[0] + off, r[1] + off, r[2], r[3]],
+        rgba(63, 63, 63, (230.0 * opacity) as u8),
+    );
+    mark(r, rgba(255, 255, 255, (240.0 * opacity) as u8));
 }
 
 /// A button's mark, in cells of a few pixels centred on it.
@@ -540,6 +739,25 @@ fn glyph(
         Control::Back => arrow(batch, (0.0, 1.0)),
         Control::Left => arrow(batch, (-1.0, 0.0)),
         Control::Right => arrow(batch, (1.0, 0.0)),
+        Control::Ascend => arrow(batch, (0.0, -1.0)),
+        Control::Descend => arrow(batch, (0.0, 1.0)),
+        Control::Dismount => arrow(batch, (0.0, 1.0)),
+        Control::Sprint => {
+            arrow(batch, (0.0, -1.0));
+            cell(batch, -2.0, 2.5, 4.0, 1.0);
+        }
+        Control::Attack => {
+            cell(batch, -2.5, -2.5, 5.0, 5.0);
+            cell(batch, -4.0, -0.5, 8.0, 1.0);
+            cell(batch, -0.5, -4.0, 1.0, 8.0);
+        }
+        Control::Use => {
+            cell(batch, -2.5, -2.5, 5.0, 1.0);
+            cell(batch, -2.5, 1.5, 5.0, 1.0);
+            cell(batch, -2.5, -1.5, 1.0, 3.0);
+            cell(batch, 1.5, -1.5, 1.0, 3.0);
+        }
+        Control::Joystick => cell(batch, -2.0, -2.0, 4.0, 4.0),
         // Sneak: a hollow diamond; jump: a filled one.
         Control::Sneak | Control::Jump => {
             for i in 0..4 {
