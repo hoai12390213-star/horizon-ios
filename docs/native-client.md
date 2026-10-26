@@ -65,6 +65,18 @@ Development builds that link quickly: `cargo build --profile fast -p horizon-cli
 | F3 | Debug overlay (position, chunk, light, biome, FPS) |
 | Esc | Pause menu (Save and Quit) |
 
+On touch screens, Horizon provides native controls with D-pad or joystick movement, gesture or split attack/use
+controls, and context-sensitive swimming, flying and vehicle controls. Touch button size, opacity, look sensitivity,
+sprint options and layout are available under **Options → Controls**. Turn on **Edit Touch Layout**, return to the
+game, then drag buttons to reposition them; their positions are saved relative to screen size in
+`horizon-touch.txt` beside `options.txt`.
+
+Swipe left from the right edge of the screen to open the touch-control drawer. Use **Edit** to move existing
+controls, **Add key button** to add a button, and **Rebind selected** to assign a different key. Choose a key
+from the on-screen list or tap **Use keyboard key** and press a key on a connected keyboard. The drawer's
+**Menu layer** option keeps touch controls available over the in-game Options screen; swipe from the edge again
+to change the layout there. Built-in touch buttons follow the current key assignments in **Options → Controls**.
+
 Worlds autosave every 6000 ticks (5 minutes), when chunks unload and on quit.
 On headless Linux use `vscreen start ./target/release/horizon-client` and
 `vscreen shot`.

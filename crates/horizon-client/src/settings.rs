@@ -178,6 +178,8 @@ pub struct Settings {
     pub horizon: crate::graphics::Graphics,
     /// Controller settings (`horizon-controller.txt`, Horizon's own).
     pub controller: crate::gamepad::PadSettings,
+    /// Touch layout and interaction settings (`horizon-touch.txt`).
+    pub touch: crate::touch::TouchSettings,
     /// Horizon's optional extras (`horizon-extras.txt`), all off by default.
     pub extras: crate::extras::Extras,
     /// The Horizon mods turned on (`horizon-mods.txt`), all off by default.
@@ -253,6 +255,7 @@ impl Default for Settings {
             sprint_window: 7,
             horizon: Default::default(),
             controller: Default::default(),
+            touch: Default::default(),
             extras: Default::default(),
             mods: Default::default(),
         }
@@ -299,6 +302,10 @@ impl Settings {
             .parent()
             .map(crate::gamepad::PadSettings::load)
             .unwrap_or_default();
+        let touch = path
+            .parent()
+            .map(crate::touch::TouchSettings::load)
+            .unwrap_or_default();
         let extras = path
             .parent()
             .map(crate::extras::Extras::load)
@@ -311,6 +318,7 @@ impl Settings {
             Ok(bytes) => Self {
                 horizon,
                 controller,
+                touch: touch.clone(),
                 extras,
                 mods,
                 ..Self::parse(&String::from_utf8_lossy(&bytes))
@@ -318,6 +326,7 @@ impl Settings {
             Err(_) => Self {
                 horizon,
                 controller,
+                touch,
                 extras,
                 mods,
                 ..Self::default()
@@ -419,6 +428,7 @@ impl Settings {
             sprint_window: f.int("sprintWindow"),
             horizon: Default::default(),
             controller: Default::default(),
+            touch: Default::default(),
             extras: Default::default(),
             mods: Default::default(),
             auto_jump: f.bool("autoJump"),
@@ -554,6 +564,7 @@ impl Settings {
         if let Some(dir) = path.parent() {
             self.horizon.save(dir);
             self.controller.save(dir);
+            self.touch.save(dir);
             self.extras.save(dir);
             self.mods.save(dir);
         }

@@ -4169,7 +4169,7 @@ impl Game<'_> {
         self.tick_command_extras();
         self.tick_mods();
         let camera_eye = self.camera_eye_height();
-        let stick = self.pad_move();
+        let stick = self.pad_move().or_else(|| self.touch_move());
         if self.riding.is_some() && self.player.is_some() {
             let playing = self.screen == Screen::Playing;
             let held = |k| playing && self.keys.contains(&k);
@@ -5072,9 +5072,6 @@ impl Game<'_> {
             let tw = HudBatch::text_width(atlas, text);
             batch.text(atlas, text, (w - tw) / 2.0, h - 59.0, u32::MAX, true);
         }
-        if show_hud {
-            self.draw_touch_controls(&mut batch);
-        }
         self.draw_chat(&mut batch);
         self.draw_tab_list(&mut batch);
         // Screen.extractBlurredBackground blurs the world and HUD, while the
@@ -5116,6 +5113,7 @@ impl Game<'_> {
         self.remote_hud(&mut batch);
         self.draw_sign_editor(&mut batch);
         self.draw_book(&mut batch);
+        self.draw_touch_controls(&mut batch);
         self.draw_touch_close(&mut batch);
         if let Some((overlay, at)) = &mut self.loading_overlay {
             overlay.done(at.elapsed().as_secs_f32());
@@ -11342,16 +11340,26 @@ impl ApplicationHandler for Game<'_> {
                         self.answer_pack_prompt(false)?;
                     }
                 }
+                // Text input methods can commit text independently of key presses.
+                WindowEvent::Ime(winit::event::Ime::Commit(text))
+                    if self.screen == Screen::Chat && self.title.is_none() =>
+                {
+                    self.chat_type(&text);
+                }
                 WindowEvent::KeyboardInput { event, .. }
                     if self.screen == Screen::Chat && self.title.is_none() =>
                 {
-                    if let PhysicalKey::Code(key) = event.physical_key {
-                        if event.state == ElementState::Pressed {
+                    if event.state == ElementState::Pressed {
+                        if let PhysicalKey::Code(key) = event.physical_key {
                             self.keys.insert(key);
                             self.chat_key(&event);
-                        } else {
-                            self.keys.remove(&key);
+                        } else if let Some(text) = event.text.as_deref() {
+                            // iOS's soft keyboard sends text with an unidentified
+                            // physical key, so it cannot go through chat_key.
+                            self.chat_type(text);
                         }
+                    } else if let PhysicalKey::Code(key) = event.physical_key {
+                        self.keys.remove(&key);
                     }
                 }
                 WindowEvent::KeyboardInput { event, .. } if self.sign_edit.is_some() => {
@@ -11470,6 +11478,12 @@ impl ApplicationHandler for Game<'_> {
                     let PhysicalKey::Code(key) = event.physical_key else {
                         return Ok(());
                     };
+                    if event.state == ElementState::Pressed
+                        && !event.repeat
+                        && self.capture_touch_key(key)
+                    {
+                        return Ok(());
+                    }
                     self.extras_key(key, event.state == ElementState::Pressed, event.repeat);
                     // key.smoothCamera toggles the cinematic camera.
                     if self.screen == Screen::Playing

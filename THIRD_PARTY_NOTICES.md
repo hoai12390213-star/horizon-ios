@@ -18,3 +18,9 @@ by The Pixelify Sans Project Authors, licensed under the SIL Open Font License 1
 `crates/horizon-theme/icons/pixel/*.svg` are icons from
 [Pixelarticons](https://github.com/halfmage/pixelarticons) by Gerrit Halfmann, under the MIT
 license (`crates/horizon-theme/icons/pixel/LICENSE-pixelarticons.txt`).
+
+## TouchController
+
+Horizon reimplements TouchController's core movement and interaction modes, contextual vehicle controls and
+layout options in Rust, without including its source code or assets. TouchController by fifth_light is licensed
+under LGPL-3.0-or-later: [TouchController](https://github.com/TouchController/TouchController).
