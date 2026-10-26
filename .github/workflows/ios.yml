@@ -104,7 +104,7 @@ jobs:
     # vars.MAC_RUNNER lets the maintainer point this at his own Mac, as release.yml does; a hosted Mac answers
     # for everyone else. aarch64-apple-ios needs no Xcode project: rustc cross-compiles, and the steps below
     # check the objects it produced really are arm64 iOS.
-    runs-on: ${{ vars.MAC_RUNNER || 'macos-14' }}
+    runs-on: ${{ vars.MAC_RUNNER || 'macos-15' }}
     # Six static archives, twenty-one crate checks, and an Xcode build and link, from a cold cache on the first
     # run: nothing here is quick, and a run killed at the halfway point reports no portability table at all.
     timeout-minutes: 90
