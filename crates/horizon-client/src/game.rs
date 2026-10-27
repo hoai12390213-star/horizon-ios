@@ -10218,8 +10218,13 @@ impl Game<'_> {
             debug_lines_on_top: &debug_lines_on_top,
             debug_crosshair: &debug_crosshair,
             hud: &hud,
+            // MakeUp's post pass draws its own volumetric cloud layer. The
+            // vanilla cloud mesh writes depth and would hide that layer, so
+            // render only one cloud system while the MakeUp cloud option is on.
             clouds: (!title
                 && self.dim == Dim::Overworld
+                && !(self.settings.horizon.makeup_visuals
+                    && self.settings.horizon.makeup_volumetric_clouds)
                 && horizon_client::clouds::visible(&self.settings.clouds, sky.cloud_color[3]))
             .then(|| self.gui.atlas.sprites.get("horizon/white"))
             .flatten()

@@ -343,8 +343,10 @@ fn makeup_contact_shadow(uv: vec2<f32>) -> f32 {
     let tangent = environment_settings.cloud_params.x;
     let aspect = environment_settings.cloud_params.y;
     var occlusion = 0.0;
-    for (var i = 1u; i <= 10u; i += 1u) {
-        let travel = 0.45 + f32(i) * 0.5;
+    // Trace farther than a one-block contact range so nearby trees and terrain
+    // can cast visible screen-space shadows across the ground.
+    for (var i = 1u; i <= 12u; i += 1u) {
+        let travel = 0.45 + f32(i) * 1.65;
         let point = origin + sun_direction * travel;
         let view_distance = dot(point, forward);
         if view_distance <= 0.05 {
@@ -364,14 +366,14 @@ fn makeup_contact_shadow(uv: vec2<f32>) -> f32 {
             continue;
         }
         let scene_distance = 0.05 / neighbor;
-        let thickness = 0.22 + travel * 0.07;
+        let thickness = 0.3 + travel * 0.08;
         let error = abs(scene_distance - view_distance);
         if error < thickness {
             occlusion = 1.0 - smoothstep(0.0, thickness, error);
             break;
         }
     }
-    return 1.0 - occlusion * post_settings.contact_strength * 0.72;
+    return 1.0 - occlusion * post_settings.contact_strength * 0.88;
 }
 
 // Camera rotation and approximate camera translation blur; independent object
@@ -629,6 +631,11 @@ fn makeup_water_reflection(uv: vec2<f32>) -> vec4<f32> {
             vec2(0),
             vec2<i32>(size) - vec2(1)
         );
+        // Ignore the water surface itself; otherwise the ray immediately
+        // reflects the same water pixel and never reaches the shore or sky.
+        if textureLoad(water_mask, sample_pixel, 0).r > 0.5 {
+            continue;
+        }
         let scene_depth_value = textureLoad(scene_depth, sample_pixel, 0);
         if scene_depth_value <= 0.00001 {
             let sky = textureSampleLevel(world, world_sampler, sample_uv, 0.0).rgb;
@@ -692,8 +699,18 @@ fn post_rgb(uv: vec2<f32>, use_fxaa: bool, use_makeup: bool, use_chroma: bool) -
                     vec2(0.0),
                     vec2(1.0)
                 ));
-                let fresnel = pow(clamp(abs(uv.y - 0.5) * 2.0, 0.0, 1.0), 1.4);
-                let reflectivity = (0.2 + fresnel * 0.3) * reflection.a;
+                let screen = uv * 2.0 - vec2(1.0);
+                let view_direction = normalize(
+                    environment_settings.view_right.xyz
+                        * (screen.x * environment_settings.cloud_params.y
+                            * environment_settings.cloud_params.x)
+                    + environment_settings.view_up.xyz
+                        * (-screen.y * environment_settings.cloud_params.x)
+                    - environment_settings.view_back.xyz
+                );
+                let view_facing = abs(dot(view_direction, vec3(0.0, 1.0, 0.0)));
+                let fresnel = pow(clamp(1.0 - view_facing, 0.0, 1.0), 3.0);
+                let reflectivity = (0.28 + fresnel * 0.5) * reflection.a;
                 scene = mix(scene, reflection.rgb * vec3(0.82, 0.94, 1.12), reflectivity);
             }
         }

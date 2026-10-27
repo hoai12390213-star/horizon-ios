@@ -293,12 +293,12 @@ pub fn rows(level: Level) -> Vec<Row> {
             h(
                 H::ContactShadows,
                 Medium,
-                "Marches along sunlight in screen space for local contact shadows.",
+                "Traces sunlight through visible depth for longer shadows; off-screen casters are not available.",
             ),
             h(
                 H::ContactShadowStrength,
                 Low,
-                "Darkening strength for the screen-space contact shadow approximation.",
+                "Darkening strength for the screen-space shadow approximation.",
             ),
             h(
                 H::MotionBlur,
@@ -478,11 +478,10 @@ impl H {
             H::VolumetricClouds => {
                 labelled("Volumetric Clouds", on_off(g.makeup_volumetric_clouds))
             }
-            H::ContactShadows => labelled("Contact Shadows", on_off(g.makeup_contact_shadows)),
-            H::ContactShadowStrength => labelled(
-                "Contact Shadow Strength",
-                format!("{}%", g.makeup_contact_strength),
-            ),
+            H::ContactShadows => labelled("Screen-Space Shadows", on_off(g.makeup_contact_shadows)),
+            H::ContactShadowStrength => {
+                labelled("Shadow Strength", format!("{}%", g.makeup_contact_strength))
+            }
             H::MotionBlur => labelled("Motion Blur", on_off(g.makeup_motion_blur)),
             H::BatteryMode => labelled("Battery Mode", on_off(g.battery)),
             H::GraphicsApi => labelled("Graphics API", g.api.label()),

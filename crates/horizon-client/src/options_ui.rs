@@ -1183,7 +1183,7 @@ fn horizon_page_tooltip(page: Page) -> Option<&'static str> {
         }
         Page::Agent => "Let your own AI agent play: horizon-ctl and MCP clients on this computer.",
         Page::ShaderPacks => {
-            "Choose a shader, then apply it. Includes MakeUp Ultra Fast and compatible shader packs."
+            "Apply MakeUp's visual profile, or select a compatible shader pack and apply it."
         }
         Page::Mods => {
             "Mods made for Horizon, from the horizon-mods folder. Each runs in a sandbox and stays off until you turn it on."
@@ -1479,11 +1479,14 @@ impl OptionsUi {
                     rows.push(Row::Buttons(pack(&two[0]), two.get(1).map(pack)));
                 }
                 let selected_is_active = selected == &current;
-                let apply_label = if selected_is_active {
-                    "Disable selected shader"
-                } else {
-                    "Apply selected shader"
-                };
+                let apply_label =
+                    if selected_is_active && self.shader_selection == ShaderChoice::MakeUp {
+                        "Reapply MakeUp profile"
+                    } else if selected_is_active {
+                        "Disable selected shader"
+                    } else {
+                        "Apply selected shader"
+                    };
                 rows.push(Row::Buttons(
                     button(
                         0.0,
@@ -2709,9 +2712,7 @@ impl OptionsUi {
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
                         Act::SelectShader(choice) => self.shader_selection = choice,
                         Act::ApplyShader => {
-                            let choice = if self.shader_selection == ShaderChoice::MakeUp
-                                && s.horizon.makeup_visuals
-                                || matches!(&self.shader_selection, ShaderChoice::Pack(name) if !s.horizon.makeup_visuals && self.shader_pack.as_ref() == Some(name))
+                            let choice = if matches!(&self.shader_selection, ShaderChoice::Pack(name) if !s.horizon.makeup_visuals && self.shader_pack.as_ref() == Some(name))
                             {
                                 ShaderChoice::Off
                             } else {
@@ -2719,7 +2720,21 @@ impl OptionsUi {
                             };
                             match choice {
                                 ShaderChoice::MakeUp => {
-                                    s.horizon.makeup_visuals = true;
+                                    let g = &mut s.horizon;
+                                    g.makeup_visuals = true;
+                                    g.makeup_temporal_aa = true;
+                                    g.makeup_water_reflections = true;
+                                    g.makeup_chromatic_aberration = false;
+                                    g.makeup_depth_of_field = false;
+                                    g.makeup_focus_distance = 16;
+                                    g.makeup_bloom_strength = 70;
+                                    g.makeup_ao_strength = 50;
+                                    g.makeup_volumetric_light = true;
+                                    g.makeup_volumetric_clouds = true;
+                                    g.makeup_contact_shadows = true;
+                                    g.makeup_contact_strength = 85;
+                                    g.makeup_motion_blur = false;
+                                    g.makeup_color_blind_mode = 0;
                                     events.push(Event::Changed);
                                     events.push(Event::ShaderPack(None));
                                 }
@@ -4403,8 +4418,18 @@ mod tests {
         assert!(!s.horizon.makeup_visuals);
         let apply_events = click(&mut ui, &mut s, Act::ApplyShader);
         assert!(s.horizon.makeup_visuals);
+        assert!(s.horizon.makeup_temporal_aa);
+        assert!(s.horizon.makeup_volumetric_clouds);
+        assert!(s.horizon.makeup_volumetric_light);
+        assert!(s.horizon.makeup_contact_shadows);
+        assert_eq!(s.horizon.makeup_bloom_strength, 70);
+        assert_eq!(s.horizon.makeup_ao_strength, 50);
         assert!(apply_events.contains(&Event::Changed));
         assert!(apply_events.contains(&Event::ShaderPack(None)));
+        s.horizon.makeup_volumetric_clouds = false;
+        click(&mut ui, &mut s, Act::ApplyShader);
+        assert!(s.horizon.makeup_visuals);
+        assert!(s.horizon.makeup_volumetric_clouds);
         assert!(click(&mut ui, &mut s, Act::OpenShaderFolder).contains(&Event::OpenShaderFolder));
         ui.stack = vec![Page::Main, Page::Horizon];
         assert!(
