@@ -37,6 +37,11 @@ pub enum H {
     Overlay,
     ResolutionScale,
     Antialiasing,
+    MakeUpVisuals,
+    ChromaticAberration,
+    DepthOfField,
+    FocusDistance,
+    ColorBlindness,
     BatteryMode,
     GraphicsApi,
 }
@@ -222,6 +227,31 @@ pub fn rows(level: Level) -> Vec<Row> {
                 "FXAA smooths jagged edges of the world; slightly softer image.",
             ),
             h(
+                H::MakeUpVisuals,
+                Medium,
+                "MakeUp inspired WGSL color finishing, bloom and screen-space contact shading.",
+            ),
+            h(
+                H::ChromaticAberration,
+                Low,
+                "Separates color channels toward the screen edges, like MakeUp's optional effect.",
+            ),
+            h(
+                H::DepthOfField,
+                Medium,
+                "Blurs the world in front of and behind the chosen focus distance.",
+            ),
+            h(
+                H::FocusDistance,
+                Low,
+                "Distance from the camera that stays sharp while depth of field is on.",
+            ),
+            h(
+                H::ColorBlindness,
+                None,
+                "MakeUp color vision correction: off, protanopia, deuteranopia or tritanopia.",
+            ),
+            h(
                 H::PresentMode,
                 None,
                 "How frames reach the screen while VSync is off.",
@@ -324,6 +354,7 @@ impl H {
             }
             H::Workers => Some(g.workers as f32 / max_workers() as f32),
             H::ResolutionScale => Some((g.resolution_scale as f32 - 50.0) / 150.0),
+            H::FocusDistance => Some((g.makeup_focus_distance as f32 - 2.0) / 62.0),
             _ => None,
         }
     }
@@ -365,6 +396,21 @@ impl H {
             },
             H::ResolutionScale => labelled("Resolution Scale", format!("{}%", g.resolution_scale)),
             H::Antialiasing => labelled("Anti-aliasing", if g.fxaa { "FXAA" } else { "Off" }),
+            H::MakeUpVisuals => labelled("MakeUp Visuals", on_off(g.makeup_visuals)),
+            H::ChromaticAberration => labelled(
+                "Chromatic Aberration",
+                on_off(g.makeup_chromatic_aberration),
+            ),
+            H::DepthOfField => labelled("Depth of Field", on_off(g.makeup_depth_of_field)),
+            H::FocusDistance => labelled(
+                "Focus Distance",
+                format!("{} blocks", g.makeup_focus_distance),
+            ),
+            H::ColorBlindness => labelled(
+                "Color Vision Correction",
+                ["Off", "Protanopia", "Deuteranopia", "Tritanopia"]
+                    [g.makeup_color_blind_mode.min(3) as usize],
+            ),
             H::BatteryMode => labelled("Battery Mode", on_off(g.battery)),
             H::GraphicsApi => labelled("Graphics API", g.api.label()),
             H::Overlay => labelled(
@@ -387,6 +433,7 @@ impl H {
             }
             H::Workers => g.workers = (v * max_workers() as f32).round() as u32,
             H::ResolutionScale => g.resolution_scale = (50.0 + (v * 30.0).round() * 5.0) as u32,
+            H::FocusDistance => g.makeup_focus_distance = (2.0 + v * 62.0).round() as u32,
             _ => {}
         }
     }
@@ -418,6 +465,14 @@ impl H {
             H::AnimatedTextures => g.animated_textures = !g.animated_textures,
             H::PresentMode => g.present_mode = step(&PresentMode::ALL, g.present_mode, back),
             H::Antialiasing => g.fxaa = !g.fxaa,
+            H::MakeUpVisuals => g.makeup_visuals = !g.makeup_visuals,
+            H::ChromaticAberration => {
+                g.makeup_chromatic_aberration = !g.makeup_chromatic_aberration
+            }
+            H::DepthOfField => g.makeup_depth_of_field = !g.makeup_depth_of_field,
+            H::ColorBlindness => {
+                g.makeup_color_blind_mode = step(&[0, 1, 2, 3], g.makeup_color_blind_mode, back)
+            }
             H::BatteryMode => g.battery = !g.battery,
             H::GraphicsApi => g.api = step(&GraphicsApi::ALL, g.api, back),
             H::Pacing => {
@@ -453,6 +508,9 @@ impl Item {
             Item::Horizon(H::Weather) => g.weather,
             Item::Horizon(H::AnimatedTextures) => g.animated_textures,
             Item::Horizon(H::Antialiasing) => g.fxaa,
+            Item::Horizon(H::MakeUpVisuals) => g.makeup_visuals,
+            Item::Horizon(H::ChromaticAberration) => g.makeup_chromatic_aberration,
+            Item::Horizon(H::DepthOfField) => g.makeup_depth_of_field,
             Item::Horizon(H::BatteryMode) => g.battery,
             Item::Vanilla(Opt::ViewBobbing) => s.view_bobbing,
             Item::Vanilla(Opt::Vsync) => s.vsync,

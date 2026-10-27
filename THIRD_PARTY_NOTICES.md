@@ -21,6 +21,17 @@ license (`crates/horizon-theme/icons/pixel/LICENSE-pixelarticons.txt`).
 
 ## TouchController
 
-Horizon reimplements TouchController's core movement and interaction modes, contextual vehicle controls and
-layout options in Rust, without including its source code or assets. TouchController by fifth_light is licensed
-under LGPL-3.0-or-later: [TouchController](https://github.com/TouchController/TouchController).
+Horizon's native touch controls reimplement the D-pad and joystick movement methods, gesture and split interaction
+styles, context-sensitive swim, flight and vehicle controls, and layout options inspired by
+[TouchController](https://github.com/TouchController/TouchController), by fifth_light. The upstream project is
+licensed under LGPL-3.0-or-later. Horizon's implementation is Rust and does not include TouchController source
+code or assets.
+
+## MakeUp - Ultra Fast
+
+The MakeUp-inspired renderer work in `crates/horizon-client/src/world_post.wgsl` is based on the shader
+features and rendering flow of [MakeUp - Ultra Fast](https://github.com/javiergcim/MakeUpUltraFast) by
+XavierFST (Javier Garduño), version 9.6. Upstream shader code is licensed under LGPL-3.0-or-later; the
+license is included at `third_party/makeup-ultrafast/LICENSE`. Horizon's WGSL implementation is rewritten
+for wgpu and does not bundle the original GLSL pack. The port is incomplete; new derived pieces must retain
+this attribution and comply with the LGPL.

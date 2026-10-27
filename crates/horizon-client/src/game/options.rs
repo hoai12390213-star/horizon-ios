@@ -262,7 +262,15 @@ impl Game<'_> {
             r.set_present_mode(s.vsync, s.horizon.present_mode);
             r.animated_textures = s.horizon.animated_textures;
             r.set_mipmap_levels(s.mipmap_levels.max(0) as u32);
-            r.set_world_post(s.horizon.resolution_scale as f32 / 100.0, s.horizon.fxaa);
+            r.set_world_post(
+                s.horizon.resolution_scale as f32 / 100.0,
+                s.horizon.fxaa,
+                s.horizon.makeup_visuals,
+                s.horizon.makeup_chromatic_aberration,
+                s.horizon.makeup_depth_of_field,
+                s.horizon.makeup_focus_distance as f32,
+                s.horizon.makeup_color_blind_mode,
+            );
         }
         // Window.updateFullscreenIfChanged: only a changed option asks the
         // window to change, so applying settings never undoes a fullscreen

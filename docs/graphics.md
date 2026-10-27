@@ -21,11 +21,11 @@ Every row has a one-line description and its cost in frame time (none, low, medi
 | Quality | smooth lighting, mipmap levels, biome blend, clouds, cloud distance, weather radius, particles, entity shadows, cutout leaves | `options.txt` |
 | | sky, fog, weather, animated textures | `horizon-graphics.txt` |
 | Display | FOV, max framerate, VSync, fullscreen, GUI scale | `options.txt` |
-| | resolution scale, anti-aliasing (FXAA), present mode, frame pacing | `horizon-graphics.txt` |
+| | resolution scale, anti-aliasing (FXAA), MakeUp Visuals, chromatic aberration, depth of field, color vision correction, present mode, frame pacing | `horizon-graphics.txt` |
 | Performance | battery mode, worker threads, upload budget per frame | `horizon-graphics.txt` |
 | Overlay | performance overlay: FPS, frame/CPU/GPU times, frame-time graph | `horizon-graphics.txt` |
 
-`options.txt` keeps exactly vanilla's keys and values, so the options harness still compares it with vanilla; Horizon's settings live in `horizon-graphics.txt` beside it. Their defaults render as vanilla does: cave culling on, no upload budgets, sky, fog and weather on, 100% resolution, no FXAA, the present mode following VSync. VSync on always waits for the display (Fifo), in a window and in fullscreen, as in vanilla; the present mode setting chooses how frames are shown only while VSync is off. Frame pacing defaults to Efficient: the limiter sleeps through the last half millisecond where vanilla spins, which changes timing, not pixels.
+`options.txt` keeps exactly vanilla's keys and values, so the options harness still compares it with vanilla; Horizon's settings live in `horizon-graphics.txt` beside it. Their defaults render as vanilla does: cave culling on, no upload budgets, sky, fog and weather on, 100% resolution, no FXAA or MakeUp effects, the present mode following VSync. MakeUp effects are an opt-in WGSL reimplementation; see the [effect coverage](makeup-port.md). VSync on always waits for the display (Fifo), in a window and in fullscreen, as in vanilla; the present mode setting chooses how frames are shown only while VSync is off. Frame pacing defaults to Efficient: the limiter sleeps through the last half millisecond where vanilla spins, which changes timing, not pixels.
 
 **Battery mode** (Performance, off by default) is for laptops and handhelds: at most 60 frames per second in a world, 30 in menus without a world or while another window has focus, and half the automatic worker threads (chunks load slower). It changes only when frames are drawn: what they show and the game's 20 ticks per second stay as they are.
 

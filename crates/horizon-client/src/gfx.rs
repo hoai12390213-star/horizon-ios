@@ -2749,10 +2749,27 @@ impl Renderer {
             self.release_section(key);
         }
     }
-    /// Horizon's resolution scale (world pixels per window pixel) and FXAA.
-    pub fn set_world_post(&mut self, scale: f32, antialias: bool) {
+    /// Horizon's resolution scale, FXAA, and optional MakeUp inspired effects.
+    pub fn set_world_post(
+        &mut self,
+        scale: f32,
+        antialias: bool,
+        makeup: bool,
+        chroma: bool,
+        depth_of_field: bool,
+        focus_distance: f32,
+        color_blind_mode: u32,
+    ) {
         self.world_post.scale = scale.clamp(0.25, 2.0);
         self.world_post.antialias = antialias;
+        self.world_post.makeup_enabled = makeup;
+        self.world_post.chroma_enabled = chroma;
+        self.world_post.set_effect_settings(
+            &self.queue,
+            depth_of_field,
+            focus_distance,
+            color_blind_mode,
+        );
     }
     /// Runs `post` over the world from now on (`None`: no pack), for the dimension `dimension`.
     /// Returns the programs that run and the notes of loading them.
@@ -3971,11 +3988,18 @@ impl Renderer {
             && let Some((_, Some(post))) = &mut self.pack_post
         {
             let size = self.world_post.size().unwrap_or([1, 1]);
+            let pack_color = if self.world_post.makeup_effects_enabled() {
+                self.world_post
+                    .finish_for_pack(&mut encoder)
+                    .unwrap_or(color)
+            } else {
+                color
+            };
             post.run(
                 &self.device,
                 &self.queue,
                 &mut encoder,
-                color,
+                pack_color,
                 depth,
                 &view_target,
                 frame,

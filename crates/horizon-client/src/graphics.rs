@@ -246,6 +246,16 @@ pub struct Graphics {
     pub resolution_scale: u32,
     /// FXAA over the world.
     pub fxaa: bool,
+    /// MakeUp Ultra Fast inspired WGSL post effects. Off by default.
+    pub makeup_visuals: bool,
+    /// Optional MakeUp chromatic aberration. Off by default, as in its stock profiles.
+    pub makeup_chromatic_aberration: bool,
+    /// Optional MakeUp depth of field. Off by default.
+    pub makeup_depth_of_field: bool,
+    /// Camera focus distance for depth of field, in blocks (2..=64).
+    pub makeup_focus_distance: u32,
+    /// Color-vision correction: 0 off, 1 protanopia, 2 deuteranopia, 3 tritanopia.
+    pub makeup_color_blind_mode: u32,
     /// Battery mode: at most 60 frames per second in a world and 30 in menus
     /// or behind other windows, and half the worker threads. Off by default;
     /// it changes when frames are drawn, never what they show or the ticks.
@@ -273,6 +283,11 @@ impl Default for Graphics {
             overlay: Overlay::Off,
             resolution_scale: 100,
             fxaa: false,
+            makeup_visuals: false,
+            makeup_chromatic_aberration: false,
+            makeup_depth_of_field: false,
+            makeup_focus_distance: 16,
+            makeup_color_blind_mode: 0,
             battery: false,
             api: GraphicsApi::Auto,
         }
@@ -323,6 +338,17 @@ impl Graphics {
                 "workers" => g.workers = number(g.workers).min(64),
                 "resolutionScale" => g.resolution_scale = number(g.resolution_scale).clamp(50, 200),
                 "fxaa" => g.fxaa = flag(g.fxaa),
+                "makeupVisuals" => g.makeup_visuals = flag(g.makeup_visuals),
+                "makeupChromaticAberration" => {
+                    g.makeup_chromatic_aberration = flag(g.makeup_chromatic_aberration)
+                }
+                "makeupDepthOfField" => g.makeup_depth_of_field = flag(g.makeup_depth_of_field),
+                "makeupFocusDistance" => {
+                    g.makeup_focus_distance = number(g.makeup_focus_distance).clamp(2, 64)
+                }
+                "makeupColorBlindMode" => {
+                    g.makeup_color_blind_mode = number(g.makeup_color_blind_mode).min(3)
+                }
                 "batteryMode" => g.battery = flag(g.battery),
                 "graphicsApi" => g.api = GraphicsApi::from_name(value).unwrap_or_default(),
                 "overlay" => {
@@ -339,7 +365,7 @@ impl Graphics {
     }
     pub fn serialize(&self) -> String {
         format!(
-            "preset:{}\nlodDistance:{}\nfarDetail:{}\ncaveCulling:{}\nentityCulling:{}\nchunkUpdates:{}\nuploadBudgetKiB:{}\nsky:{}\nfog:{}\nweather:{}\nanimatedTextures:{}\npresentMode:{}\nframePacing:{}\nworkers:{}\noverlay:{}\nresolutionScale:{}\nfxaa:{}\nbatteryMode:{}\ngraphicsApi:{}\n",
+            "preset:{}\nlodDistance:{}\nfarDetail:{}\ncaveCulling:{}\nentityCulling:{}\nchunkUpdates:{}\nuploadBudgetKiB:{}\nsky:{}\nfog:{}\nweather:{}\nanimatedTextures:{}\npresentMode:{}\nframePacing:{}\nworkers:{}\noverlay:{}\nresolutionScale:{}\nfxaa:{}\nmakeupVisuals:{}\nmakeupChromaticAberration:{}\nmakeupDepthOfField:{}\nmakeupFocusDistance:{}\nmakeupColorBlindMode:{}\nbatteryMode:{}\ngraphicsApi:{}\n",
             self.preset.name(),
             self.lod_distance,
             self.far_detail.name(),
@@ -364,6 +390,11 @@ impl Graphics {
             },
             self.resolution_scale,
             bool_text(self.fxaa),
+            bool_text(self.makeup_visuals),
+            bool_text(self.makeup_chromatic_aberration),
+            bool_text(self.makeup_depth_of_field),
+            self.makeup_focus_distance,
+            self.makeup_color_blind_mode,
             bool_text(self.battery),
             self.api.name(),
         )
@@ -456,6 +487,11 @@ mod tests {
             overlay: Overlay::Graph,
             resolution_scale: 75,
             fxaa: true,
+            makeup_visuals: true,
+            makeup_chromatic_aberration: true,
+            makeup_depth_of_field: true,
+            makeup_focus_distance: 48,
+            makeup_color_blind_mode: 2,
             battery: true,
             api: GraphicsApi::Dx12,
         };

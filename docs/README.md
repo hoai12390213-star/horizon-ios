@@ -11,6 +11,7 @@ To play, use [the launcher](../launcher/README.md); the project site is [playhor
 - [Hosting a server: design](server.md): `horizon-server`, the design and the plan: install, `server.toml`, the CLI, the web panel, backups, services, Docker, and the bot benchmark against vanilla.
 - [Agent control](agent-control.md): what AI agents can drive in the launcher and the game, and the design of the control socket, `horizon-ctl` and MCP.
 - [Graphics](graphics.md): the Simple and Advanced graphics settings, the graphics benchmark and what it measured.
+- [MakeUp shader port](makeup-port.md): MakeUp Ultra Fast effects reimplemented in WGSL and their current coverage.
 - [Benchmark](benchmark.md): Horizon against vanilla 26.3 and vanilla with performance mods, on the same machine, world, path and settings: what is measured, how it is kept fair, how to reproduce it.
 - [Extras](extras.md): optional zoom, minimap, FPS and keystroke overlays and auto-reconnect, all off by default.
 - [Shader packs](shaders.md): Horizon's own WGSL shader packs, how to make and check one (`horizon-shader`).
