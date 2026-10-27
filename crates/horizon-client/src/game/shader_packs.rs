@@ -93,20 +93,34 @@ fn choose(pack: Option<&str>) -> std::io::Result<()> {
 }
 
 /// The Shader Packs page's list and choice, read again (when it opens, and after a choice).
-pub(super) fn fill_page(options: &mut horizon_client::options_ui::OptionsUi) {
+pub(super) fn fill_page(options: &mut horizon_client::options_ui::OptionsUi, makeup_enabled: bool) {
     options.shader_packs = horizon_shaders::discover(&game_dir().join("shaderpacks"))
         .into_iter()
         .map(|found| (found.name, found.problem))
         .collect();
     options.shader_pack = chosen();
+    options.shader_selection = if makeup_enabled {
+        horizon_client::options_ui::ShaderChoice::MakeUp
+    } else {
+        options
+            .shader_pack
+            .clone()
+            .map_or(horizon_client::options_ui::ShaderChoice::Off, |name| {
+                horizon_client::options_ui::ShaderChoice::Pack(name)
+            })
+    };
 }
 
 /// The page's choice: keep it, then show it.
-pub(super) fn pick(options: &mut horizon_client::options_ui::OptionsUi, pack: Option<&str>) {
+pub(super) fn pick(
+    options: &mut horizon_client::options_ui::OptionsUi,
+    pack: Option<&str>,
+    makeup_enabled: bool,
+) {
     if let Err(e) = choose(pack) {
         log::warn!("Horizon: could not keep the shader pack choice: {e}");
     }
-    fill_page(options);
+    fill_page(options, makeup_enabled);
 }
 
 /// The page's Open Shader Pack Folder.

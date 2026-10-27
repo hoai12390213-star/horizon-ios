@@ -619,7 +619,10 @@ impl Game<'_> {
                 self.open_options(self.title.is_some());
                 self.ui.options.show(page);
                 if page == Page::ShaderPacks {
-                    super::shader_packs::fill_page(&mut self.ui.options);
+                    super::shader_packs::fill_page(
+                        &mut self.ui.options,
+                        self.settings.horizon.makeup_visuals,
+                    );
                 }
                 ok()
             }

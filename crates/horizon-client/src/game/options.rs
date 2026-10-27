@@ -238,10 +238,15 @@ impl Game<'_> {
                     super::packs::open_folder(&dir);
                 }
                 Event::Credits => self.open_win_screen(false, super::win::Finish::Options),
-                Event::ShaderPacksShown => super::shader_packs::fill_page(&mut self.ui.options),
-                Event::ShaderPack(pack) => {
-                    super::shader_packs::pick(&mut self.ui.options, pack.as_deref())
-                }
+                Event::ShaderPacksShown => super::shader_packs::fill_page(
+                    &mut self.ui.options,
+                    self.settings.horizon.makeup_visuals,
+                ),
+                Event::ShaderPack(pack) => super::shader_packs::pick(
+                    &mut self.ui.options,
+                    pack.as_deref(),
+                    self.settings.horizon.makeup_visuals,
+                ),
                 Event::OpenShaderFolder => super::shader_packs::open_folder(),
             }
         }
@@ -266,9 +271,18 @@ impl Game<'_> {
                 s.horizon.resolution_scale as f32 / 100.0,
                 s.horizon.fxaa,
                 s.horizon.makeup_visuals,
+                s.horizon.makeup_temporal_aa,
+                s.horizon.makeup_water_reflections,
                 s.horizon.makeup_chromatic_aberration,
                 s.horizon.makeup_depth_of_field,
                 s.horizon.makeup_focus_distance as f32,
+                s.horizon.makeup_bloom_strength as f32 / 100.0,
+                s.horizon.makeup_ao_strength as f32 / 100.0,
+                s.horizon.makeup_volumetric_light,
+                s.horizon.makeup_volumetric_clouds,
+                s.horizon.makeup_contact_shadows,
+                s.horizon.makeup_contact_strength as f32 / 100.0,
+                s.horizon.makeup_motion_blur,
                 s.horizon.makeup_color_blind_mode,
             );
         }

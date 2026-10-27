@@ -393,10 +393,15 @@ impl Loading {
                     }
                 }
                 // The pack is chosen now and runs once the world draws.
-                Event::ShaderPacksShown => super::shader_packs::fill_page(&mut self.menu.options),
-                Event::ShaderPack(pack) => {
-                    super::shader_packs::pick(&mut self.menu.options, pack.as_deref())
-                }
+                Event::ShaderPacksShown => super::shader_packs::fill_page(
+                    &mut self.menu.options,
+                    self.settings.horizon.makeup_visuals,
+                ),
+                Event::ShaderPack(pack) => super::shader_packs::pick(
+                    &mut self.menu.options,
+                    pack.as_deref(),
+                    self.settings.horizon.makeup_visuals,
+                ),
                 Event::OpenShaderFolder => super::shader_packs::open_folder(),
                 // The startup menu runs before the game opens a control socket.
                 Event::ButtonClick | Event::CopyAgentDetails => {}

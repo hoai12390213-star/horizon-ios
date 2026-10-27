@@ -248,12 +248,30 @@ pub struct Graphics {
     pub fxaa: bool,
     /// MakeUp Ultra Fast inspired WGSL post effects. Off by default.
     pub makeup_visuals: bool,
+    /// Temporal accumulation anti-aliasing, applied with MakeUp Visuals.
+    pub makeup_temporal_aa: bool,
+    /// Screen-space water surface reflections, applied with MakeUp Visuals.
+    pub makeup_water_reflections: bool,
     /// Optional MakeUp chromatic aberration. Off by default, as in its stock profiles.
     pub makeup_chromatic_aberration: bool,
     /// Optional MakeUp depth of field. Off by default.
     pub makeup_depth_of_field: bool,
     /// Camera focus distance for depth of field, in blocks (2..=64).
     pub makeup_focus_distance: u32,
+    /// MakeUp bloom contribution (0..=100 percent).
+    pub makeup_bloom_strength: u32,
+    /// MakeUp ambient-occlusion contribution (0..=100 percent).
+    pub makeup_ao_strength: u32,
+    /// Screen-space approximation of MakeUp's volumetric light shafts.
+    pub makeup_volumetric_light: bool,
+    /// Screen-space world-anchored procedural cloud layer.
+    pub makeup_volumetric_clouds: bool,
+    /// Screen-space directional contact shadow approximation.
+    pub makeup_contact_shadows: bool,
+    /// Contact shadow contribution (0..=100 percent).
+    pub makeup_contact_strength: u32,
+    /// Camera-motion screen blur approximation.
+    pub makeup_motion_blur: bool,
     /// Color-vision correction: 0 off, 1 protanopia, 2 deuteranopia, 3 tritanopia.
     pub makeup_color_blind_mode: u32,
     /// Battery mode: at most 60 frames per second in a world and 30 in menus
@@ -284,9 +302,18 @@ impl Default for Graphics {
             resolution_scale: 100,
             fxaa: false,
             makeup_visuals: false,
+            makeup_temporal_aa: false,
+            makeup_water_reflections: true,
             makeup_chromatic_aberration: false,
             makeup_depth_of_field: false,
             makeup_focus_distance: 16,
+            makeup_bloom_strength: 40,
+            makeup_ao_strength: 70,
+            makeup_volumetric_light: false,
+            makeup_volumetric_clouds: false,
+            makeup_contact_shadows: false,
+            makeup_contact_strength: 45,
+            makeup_motion_blur: false,
             makeup_color_blind_mode: 0,
             battery: false,
             api: GraphicsApi::Auto,
@@ -339,6 +366,10 @@ impl Graphics {
                 "resolutionScale" => g.resolution_scale = number(g.resolution_scale).clamp(50, 200),
                 "fxaa" => g.fxaa = flag(g.fxaa),
                 "makeupVisuals" => g.makeup_visuals = flag(g.makeup_visuals),
+                "makeupTemporalAA" => g.makeup_temporal_aa = flag(g.makeup_temporal_aa),
+                "makeupWaterReflections" => {
+                    g.makeup_water_reflections = flag(g.makeup_water_reflections)
+                }
                 "makeupChromaticAberration" => {
                     g.makeup_chromatic_aberration = flag(g.makeup_chromatic_aberration)
                 }
@@ -346,6 +377,21 @@ impl Graphics {
                 "makeupFocusDistance" => {
                     g.makeup_focus_distance = number(g.makeup_focus_distance).clamp(2, 64)
                 }
+                "makeupBloomStrength" => {
+                    g.makeup_bloom_strength = number(g.makeup_bloom_strength).min(100)
+                }
+                "makeupAoStrength" => g.makeup_ao_strength = number(g.makeup_ao_strength).min(100),
+                "makeupVolumetricLight" => {
+                    g.makeup_volumetric_light = flag(g.makeup_volumetric_light)
+                }
+                "makeupVolumetricClouds" => {
+                    g.makeup_volumetric_clouds = flag(g.makeup_volumetric_clouds)
+                }
+                "makeupContactShadows" => g.makeup_contact_shadows = flag(g.makeup_contact_shadows),
+                "makeupContactStrength" => {
+                    g.makeup_contact_strength = number(g.makeup_contact_strength).min(100)
+                }
+                "makeupMotionBlur" => g.makeup_motion_blur = flag(g.makeup_motion_blur),
                 "makeupColorBlindMode" => {
                     g.makeup_color_blind_mode = number(g.makeup_color_blind_mode).min(3)
                 }
@@ -365,7 +411,7 @@ impl Graphics {
     }
     pub fn serialize(&self) -> String {
         format!(
-            "preset:{}\nlodDistance:{}\nfarDetail:{}\ncaveCulling:{}\nentityCulling:{}\nchunkUpdates:{}\nuploadBudgetKiB:{}\nsky:{}\nfog:{}\nweather:{}\nanimatedTextures:{}\npresentMode:{}\nframePacing:{}\nworkers:{}\noverlay:{}\nresolutionScale:{}\nfxaa:{}\nmakeupVisuals:{}\nmakeupChromaticAberration:{}\nmakeupDepthOfField:{}\nmakeupFocusDistance:{}\nmakeupColorBlindMode:{}\nbatteryMode:{}\ngraphicsApi:{}\n",
+            "preset:{}\nlodDistance:{}\nfarDetail:{}\ncaveCulling:{}\nentityCulling:{}\nchunkUpdates:{}\nuploadBudgetKiB:{}\nsky:{}\nfog:{}\nweather:{}\nanimatedTextures:{}\npresentMode:{}\nframePacing:{}\nworkers:{}\noverlay:{}\nresolutionScale:{}\nfxaa:{}\nmakeupVisuals:{}\nmakeupTemporalAA:{}\nmakeupWaterReflections:{}\nmakeupChromaticAberration:{}\nmakeupDepthOfField:{}\nmakeupFocusDistance:{}\nmakeupBloomStrength:{}\nmakeupAoStrength:{}\nmakeupVolumetricLight:{}\nmakeupVolumetricClouds:{}\nmakeupContactShadows:{}\nmakeupContactStrength:{}\nmakeupMotionBlur:{}\nmakeupColorBlindMode:{}\nbatteryMode:{}\ngraphicsApi:{}\n",
             self.preset.name(),
             self.lod_distance,
             self.far_detail.name(),
@@ -391,9 +437,18 @@ impl Graphics {
             self.resolution_scale,
             bool_text(self.fxaa),
             bool_text(self.makeup_visuals),
+            bool_text(self.makeup_temporal_aa),
+            bool_text(self.makeup_water_reflections),
             bool_text(self.makeup_chromatic_aberration),
             bool_text(self.makeup_depth_of_field),
             self.makeup_focus_distance,
+            self.makeup_bloom_strength,
+            self.makeup_ao_strength,
+            bool_text(self.makeup_volumetric_light),
+            bool_text(self.makeup_volumetric_clouds),
+            bool_text(self.makeup_contact_shadows),
+            self.makeup_contact_strength,
+            bool_text(self.makeup_motion_blur),
             self.makeup_color_blind_mode,
             bool_text(self.battery),
             self.api.name(),
@@ -488,9 +543,18 @@ mod tests {
             resolution_scale: 75,
             fxaa: true,
             makeup_visuals: true,
+            makeup_temporal_aa: true,
+            makeup_water_reflections: true,
             makeup_chromatic_aberration: true,
             makeup_depth_of_field: true,
             makeup_focus_distance: 48,
+            makeup_bloom_strength: 55,
+            makeup_ao_strength: 82,
+            makeup_volumetric_light: true,
+            makeup_volumetric_clouds: true,
+            makeup_contact_shadows: true,
+            makeup_contact_strength: 62,
+            makeup_motion_blur: true,
             makeup_color_blind_mode: 2,
             battery: true,
             api: GraphicsApi::Dx12,

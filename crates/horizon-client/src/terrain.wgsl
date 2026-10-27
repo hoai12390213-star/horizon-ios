@@ -69,6 +69,7 @@ struct TerrainOut {
     @location(2) color: vec4<f32>,
     @location(3) spherical: f32,
     @location(4) cylindrical: f32,
+    @location(5) world_pos: vec3<f32>,
 }
 // Horizon Extras' dynamic lights (dynamic_light.rs): the block light, in the vertex's units
 // (16 per level), a vertex at camera-relative `pos` gets from the frame's light sources, one
@@ -124,6 +125,7 @@ fn terrain_vertex(position: vec3<f32>, uv: vec2<f32>, layer: u32, color: vec4<f3
     out.color = color * sample_lightmap(f32(light.x) / 16.0, block / 16.0);
     out.spherical = length(pos);
     out.cylindrical = max(length(pos.xz), abs(pos.y));
+    out.world_pos = pos;
     return out;
 }
 fn linear_fog(d: f32, start: f32, end: f32) -> f32 {
@@ -146,6 +148,24 @@ fn apply_fog(color: vec4<f32>, spherical: f32, cylindrical: f32) -> vec4<f32> {
     let color = sprite(in.uv, in.layer & 0x7fffu) * in.color;
     if color.a < 0.01 { discard; }
     return apply_fog(color, in.spherical, in.cylindrical);
+}
+@group(2) @binding(0) var<uniform> makeup_water_layers: vec4<u32>;
+@fragment fn fs_makeup_water_mask(in: TerrainOut) -> @location(0) f32 {
+    let layer = in.layer & 0x7fffu;
+    if layer != makeup_water_layers.x
+        && layer != makeup_water_layers.y
+        && layer != makeup_water_layers.z {
+        discard;
+    }
+    let normal = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    if abs(normal.y) < 0.72 {
+        discard;
+    }
+    let color = sprite(in.uv, layer);
+    if color.a < 0.01 {
+        discard;
+    }
+    return 1.0;
 }
 
 // Sky (SkyRenderer): the 10-vertex sky disc fan at y = 16 (radius 512) in

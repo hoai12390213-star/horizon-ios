@@ -14,21 +14,21 @@ three daltonization modes and can run without enabling the tone-map effects.
 | MakeUp feature | Horizon port state | Notes |
 |---|---|---|
 | Final color sigmoid / tone map | **Ported** | `world_post.wgsl`, translated to WGSL from upstream `custom_sigmoid`. |
-| Bloom | **Partial** | First low-cost single-pass highlight gather; upstream uses separate buffers and mip levels. |
+| Bloom | **Partial** | Bright-pass extraction into a GPU downsample pyramid, then multilevel bloom gather with editable strength; upstream has its own blur chain and composition. |
 | FXAA | **Reused** | Horizon's existing FXAA can run with the MakeUp post pass. |
 | Chromatic aberration | **Ported** | Optional radial RGB split with a separate Graphics setting; disabled by default like MakeUp's stock profiles. |
-| Ambient occlusion | **Partial** | Uses reverse-Z scene-depth neighbors for contact darkening; upstream GTAO uses horizon sampling and temporal/buffer support. |
-| Shadows | Not ported | Needs a light-space depth pass across terrain, entities and block entities. |
-| Temporal AA / history | Not ported | Needs jittered projection, motion/reprojection data and persistent history targets. |
+| Ambient occlusion | **Partial** | Uses an 8-direction, three-radius reverse-Z search with reconstructed normals and editable strength; still lacks upstream GTAO's full horizon integral and dedicated temporal filtering. |
+| Shadows | **Partial** | Optional sun-direction depth march for local contact shadows; no light-space shadow map, off-screen occluders or entity/block-entity casters yet. |
+| Temporal AA / history | **Partial** | Jittered projection with double-buffered history, camera translation/rotation reprojection and depth/color rejection; lacks per-object velocity, so independently moving geometry may ghost. |
 | Depth of field | **Partial** | Optional disk gather using reverse-Z depth and a user focus distance; upstream uses more blur/history passes. |
 | Color blindness correction | **Ported** | Optional Protanopia, Deuteranopia and Tritanopia daltonization modes using MakeUp's algorithm. |
-| Water reflection / refraction | Not ported | Needs scene color/depth access during translucent terrain rendering. |
-| Volumetric clouds and light | Not ported | Horizon's current clouds and sky remain in use. |
-| Motion blur | Not ported | Needs previous-frame transforms or a temporal velocity buffer. |
-| Auto exposure | Not ported | Needs luminance reduction and a temporally adapted exposure value. |
-| Color schemes and dimension fog | Not ported | Requires carrying dimension/biome lighting parameters into the post and world passes. |
+| Water reflection / refraction | **Partial** | A water-only mask limits a 12-step reverse-Z screen-space reflection march to horizontal water faces; underwater ripple refraction remains. Off-screen rays and varying surface normals are unavailable. |
+| Volumetric light shafts | **Partial** | Screen-space bright-pixel scattering toward the sun, toggleable in Advanced Graphics; not a world-space medium march. |
+| Volumetric clouds | **Partial** | World-anchored eight-step density march through a height-varying cloud layer with daylight shading; it uses procedural noise instead of the upstream cloud map and has fewer samples. |
+| Motion blur | **Partial** | Optional screen blur from camera rotation and approximate translation; independently moving entities still need velocity buffers. |
+| Auto exposure | **Partial** | A 16×16 GPU log-luminance reduction adapts exposure over time; upstream uses its own render targets and adaptation curve. |
+| Color schemes and dimension fog | **Partial** | Subtle Nether/End post grades; Horizon keeps its vanilla fog, while MakeUp per-dimension profiles and biome colors are not ported. |
 
-This is an effect-level checklist, not a claim of percentage parity. The current implementation ports the
-sigmoid tone map, optional chromatic aberration and color blindness correction, and approximates bloom, GTAO
-and depth of field with low-cost screen sampling. The remaining work is dominated by renderer features and
-render targets, not shader syntax translation.
+This is an effect-level checklist, not a claim of image parity. The port now covers or approximates most named
+post effects, including underwater refraction and water-surface reflections, but several remain screen-space approximations. The largest
+remaining gaps are light-space shadow maps, per-object motion vectors, full dimension-specific fog profiles, and biome color schemes.

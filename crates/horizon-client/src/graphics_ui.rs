@@ -38,9 +38,18 @@ pub enum H {
     ResolutionScale,
     Antialiasing,
     MakeUpVisuals,
+    TemporalAA,
+    WaterReflections,
     ChromaticAberration,
     DepthOfField,
     FocusDistance,
+    BloomStrength,
+    AoStrength,
+    VolumetricLight,
+    VolumetricClouds,
+    ContactShadows,
+    ContactShadowStrength,
+    MotionBlur,
     ColorBlindness,
     BatteryMode,
     GraphicsApi,
@@ -232,6 +241,16 @@ pub fn rows(level: Level) -> Vec<Row> {
                 "MakeUp inspired WGSL color finishing, bloom and screen-space contact shading.",
             ),
             h(
+                H::TemporalAA,
+                High,
+                "Jitters and reprojects history with depth and color rejection; moving entities may ghost.",
+            ),
+            h(
+                H::WaterReflections,
+                Medium,
+                "Uses a 12-step screen-space depth march for visible water reflections.",
+            ),
+            h(
                 H::ChromaticAberration,
                 Low,
                 "Separates color channels toward the screen edges, like MakeUp's optional effect.",
@@ -250,6 +269,41 @@ pub fn rows(level: Level) -> Vec<Row> {
                 H::ColorBlindness,
                 None,
                 "MakeUp color vision correction: off, protanopia, deuteranopia or tritanopia.",
+            ),
+            h(
+                H::BloomStrength,
+                Medium,
+                "Strength of the bright-screen glow. Set to 0 to disable bloom.",
+            ),
+            h(
+                H::AoStrength,
+                Low,
+                "Strength of the screen-space contact shading approximation.",
+            ),
+            h(
+                H::VolumetricLight,
+                High,
+                "Screen-space light shafts toward the sun; requires MakeUp Visuals.",
+            ),
+            h(
+                H::VolumetricClouds,
+                High,
+                "Eight-step density sampling through a world-anchored cloud layer; requires MakeUp Visuals.",
+            ),
+            h(
+                H::ContactShadows,
+                Medium,
+                "Marches along sunlight in screen space for local contact shadows.",
+            ),
+            h(
+                H::ContactShadowStrength,
+                Low,
+                "Darkening strength for the screen-space contact shadow approximation.",
+            ),
+            h(
+                H::MotionBlur,
+                Medium,
+                "Blurs camera rotation and approximate translation; moving entities may not blur.",
             ),
             h(
                 H::PresentMode,
@@ -355,6 +409,9 @@ impl H {
             H::Workers => Some(g.workers as f32 / max_workers() as f32),
             H::ResolutionScale => Some((g.resolution_scale as f32 - 50.0) / 150.0),
             H::FocusDistance => Some((g.makeup_focus_distance as f32 - 2.0) / 62.0),
+            H::BloomStrength => Some(g.makeup_bloom_strength as f32 / 100.0),
+            H::AoStrength => Some(g.makeup_ao_strength as f32 / 100.0),
+            H::ContactShadowStrength => Some(g.makeup_contact_strength as f32 / 100.0),
             _ => None,
         }
     }
@@ -397,6 +454,10 @@ impl H {
             H::ResolutionScale => labelled("Resolution Scale", format!("{}%", g.resolution_scale)),
             H::Antialiasing => labelled("Anti-aliasing", if g.fxaa { "FXAA" } else { "Off" }),
             H::MakeUpVisuals => labelled("MakeUp Visuals", on_off(g.makeup_visuals)),
+            H::TemporalAA => labelled("Temporal Anti-aliasing", on_off(g.makeup_temporal_aa)),
+            H::WaterReflections => {
+                labelled("Water Reflections", on_off(g.makeup_water_reflections))
+            }
             H::ChromaticAberration => labelled(
                 "Chromatic Aberration",
                 on_off(g.makeup_chromatic_aberration),
@@ -411,6 +472,18 @@ impl H {
                 ["Off", "Protanopia", "Deuteranopia", "Tritanopia"]
                     [g.makeup_color_blind_mode.min(3) as usize],
             ),
+            H::BloomStrength => labelled("Bloom Strength", format!("{}%", g.makeup_bloom_strength)),
+            H::AoStrength => labelled("AO Strength", format!("{}%", g.makeup_ao_strength)),
+            H::VolumetricLight => labelled("Volumetric Light", on_off(g.makeup_volumetric_light)),
+            H::VolumetricClouds => {
+                labelled("Volumetric Clouds", on_off(g.makeup_volumetric_clouds))
+            }
+            H::ContactShadows => labelled("Contact Shadows", on_off(g.makeup_contact_shadows)),
+            H::ContactShadowStrength => labelled(
+                "Contact Shadow Strength",
+                format!("{}%", g.makeup_contact_strength),
+            ),
+            H::MotionBlur => labelled("Motion Blur", on_off(g.makeup_motion_blur)),
             H::BatteryMode => labelled("Battery Mode", on_off(g.battery)),
             H::GraphicsApi => labelled("Graphics API", g.api.label()),
             H::Overlay => labelled(
@@ -434,6 +507,9 @@ impl H {
             H::Workers => g.workers = (v * max_workers() as f32).round() as u32,
             H::ResolutionScale => g.resolution_scale = (50.0 + (v * 30.0).round() * 5.0) as u32,
             H::FocusDistance => g.makeup_focus_distance = (2.0 + v * 62.0).round() as u32,
+            H::BloomStrength => g.makeup_bloom_strength = (v * 100.0).round() as u32,
+            H::AoStrength => g.makeup_ao_strength = (v * 100.0).round() as u32,
+            H::ContactShadowStrength => g.makeup_contact_strength = (v * 100.0).round() as u32,
             _ => {}
         }
     }
@@ -466,6 +542,8 @@ impl H {
             H::PresentMode => g.present_mode = step(&PresentMode::ALL, g.present_mode, back),
             H::Antialiasing => g.fxaa = !g.fxaa,
             H::MakeUpVisuals => g.makeup_visuals = !g.makeup_visuals,
+            H::TemporalAA => g.makeup_temporal_aa = !g.makeup_temporal_aa,
+            H::WaterReflections => g.makeup_water_reflections = !g.makeup_water_reflections,
             H::ChromaticAberration => {
                 g.makeup_chromatic_aberration = !g.makeup_chromatic_aberration
             }
@@ -473,6 +551,10 @@ impl H {
             H::ColorBlindness => {
                 g.makeup_color_blind_mode = step(&[0, 1, 2, 3], g.makeup_color_blind_mode, back)
             }
+            H::VolumetricLight => g.makeup_volumetric_light = !g.makeup_volumetric_light,
+            H::VolumetricClouds => g.makeup_volumetric_clouds = !g.makeup_volumetric_clouds,
+            H::ContactShadows => g.makeup_contact_shadows = !g.makeup_contact_shadows,
+            H::MotionBlur => g.makeup_motion_blur = !g.makeup_motion_blur,
             H::BatteryMode => g.battery = !g.battery,
             H::GraphicsApi => g.api = step(&GraphicsApi::ALL, g.api, back),
             H::Pacing => {
@@ -509,8 +591,14 @@ impl Item {
             Item::Horizon(H::AnimatedTextures) => g.animated_textures,
             Item::Horizon(H::Antialiasing) => g.fxaa,
             Item::Horizon(H::MakeUpVisuals) => g.makeup_visuals,
+            Item::Horizon(H::TemporalAA) => g.makeup_temporal_aa,
+            Item::Horizon(H::WaterReflections) => g.makeup_water_reflections,
             Item::Horizon(H::ChromaticAberration) => g.makeup_chromatic_aberration,
             Item::Horizon(H::DepthOfField) => g.makeup_depth_of_field,
+            Item::Horizon(H::VolumetricLight) => g.makeup_volumetric_light,
+            Item::Horizon(H::VolumetricClouds) => g.makeup_volumetric_clouds,
+            Item::Horizon(H::ContactShadows) => g.makeup_contact_shadows,
+            Item::Horizon(H::MotionBlur) => g.makeup_motion_blur,
             Item::Horizon(H::BatteryMode) => g.battery,
             Item::Vanilla(Opt::ViewBobbing) => s.view_bobbing,
             Item::Vanilla(Opt::Vsync) => s.vsync,

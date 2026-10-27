@@ -330,6 +330,9 @@ pub struct Renderer {
     pub config: wgpu::SurfaceConfiguration,
     solid: wgpu::RenderPipeline,
     translucent: wgpu::RenderPipeline,
+    makeup_water_mask_pipeline: wgpu::RenderPipeline,
+    makeup_water_layers: wgpu::Buffer,
+    makeup_water_group: wgpu::BindGroup,
     /// Flat section draws (`flat`), where multi-draw is emulated.
     flat: Option<flat::Flat>,
     /// `flat` draws this frame's sections (off: the per-section draws).
@@ -471,6 +474,11 @@ pub struct Renderer {
     occlusion: occlusion::Occlusion,
     /// Resolution scale and FXAA (Horizon settings).
     world_post: world_post::Post,
+    previous_camera_angles: Option<[f32; 2]>,
+    previous_camera_position: Option<DVec3>,
+    previous_camera_basis: Option<[[f32; 3]; 3]>,
+    previous_taa_jitter: Option<[f32; 2]>,
+    taa_frame_index: u32,
     /// The shader pack's post-processing, and the dimension (legacy id) it was loaded for.
     pack_post: Option<(i32, Option<pack_post::PackPost>)>,
     /// The block sprites as one atlas, while a shader pack is loaded.
@@ -1223,6 +1231,88 @@ impl Renderer {
             true,
             Some(alpha_blend),
         );
+        let makeup_water_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("MakeUp water-layer filter"),
+                entries: &[entry(
+                    0,
+                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                )],
+            });
+        let makeup_water_empty_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("MakeUp water mask empty group"),
+                entries: &[],
+            });
+        let makeup_water_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("MakeUp water mask pipeline"),
+                bind_group_layouts: &[
+                    Some(&bindings),
+                    Some(&makeup_water_empty_layout),
+                    Some(&makeup_water_layout),
+                ],
+                ..Default::default()
+            });
+        let makeup_water_mask_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("MakeUp water surface mask"),
+                layout: Some(&makeup_water_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_terrain"),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &sprite_constants,
+                        ..Default::default()
+                    },
+                    buffers: &terrain_buffers,
+                },
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_makeup_water_mask"),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &sprite_constants,
+                        ..Default::default()
+                    },
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+        let makeup_water_layers = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("MakeUp water sprite layers"),
+            contents: bytemuck::cast_slice(&[u32::MAX; 4]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let makeup_water_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("MakeUp water sprite layers"),
+            layout: &makeup_water_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: makeup_water_layers.as_entire_binding(),
+            }],
+        });
         let sky = pipeline(
             "Sky",
             "vs_sky",
@@ -2223,6 +2313,9 @@ impl Renderer {
             config,
             solid,
             translucent,
+            makeup_water_mask_pipeline,
+            makeup_water_layers,
+            makeup_water_group,
             flat_on: flat.is_some(),
             cull_on: cull.is_some(),
             sides_on: true,
@@ -2322,6 +2415,11 @@ impl Renderer {
             block_entity_revision: next_block_entity_revision(),
             occlusion: occlusion::Occlusion::new(crate::chunk::MIN_Y, crate::chunk::HEIGHT / 16),
             world_post,
+            previous_camera_angles: None,
+            previous_camera_position: None,
+            previous_camera_basis: None,
+            previous_taa_jitter: None,
+            taa_frame_index: 0,
             pack_post: None,
             pack_atlas: None,
             hud,
@@ -2755,11 +2853,22 @@ impl Renderer {
         scale: f32,
         antialias: bool,
         makeup: bool,
+        temporal_aa: bool,
+        water_reflections: bool,
         chroma: bool,
         depth_of_field: bool,
         focus_distance: f32,
+        bloom_strength: f32,
+        ao_strength: f32,
+        volumetric_light: bool,
+        volumetric_clouds: bool,
+        contact_shadows: bool,
+        contact_strength: f32,
+        motion_blur: bool,
         color_blind_mode: u32,
     ) {
+        let temporal_changed = self.world_post.temporal_aa_enabled != temporal_aa
+            || self.world_post.makeup_enabled != makeup;
         self.world_post.scale = scale.clamp(0.25, 2.0);
         self.world_post.antialias = antialias;
         self.world_post.makeup_enabled = makeup;
@@ -2768,8 +2877,28 @@ impl Renderer {
             &self.queue,
             depth_of_field,
             focus_distance,
+            bloom_strength,
+            ao_strength,
+            volumetric_light,
+            volumetric_clouds,
+            temporal_aa,
+            water_reflections,
+            contact_shadows,
+            contact_strength,
+            motion_blur,
             color_blind_mode,
         );
+        if temporal_changed {
+            self.previous_camera_angles = None;
+            self.previous_camera_position = None;
+            self.previous_camera_basis = None;
+            self.previous_taa_jitter = None;
+            self.taa_frame_index = 0;
+        }
+    }
+    pub fn set_makeup_water_layers(&self, layers: [u32; 4]) {
+        self.queue
+            .write_buffer(&self.makeup_water_layers, 0, bytemuck::cast_slice(&layers));
     }
     /// Runs `post` over the world from now on (`None`: no pack), for the dimension `dimension`.
     /// Returns the programs that run and the notes of loading them.
@@ -2842,13 +2971,25 @@ impl Renderer {
         );
     }
     pub fn view_projection(&self, frame: &Frame) -> Mat4 {
-        self.projection(
+        let mut projection = self.projection(
             frame.fov_degrees,
             frame.yaw,
             frame.pitch,
             frame.bob,
             frame.depth_far,
-        )
+        );
+        if self.world_post.makeup_enabled && self.world_post.temporal_aa_enabled {
+            let jitter = taa_jitter(self.taa_frame_index);
+            let width = (self.config.width as f32 * self.world_post.scale)
+                .round()
+                .max(1.0);
+            let height = (self.config.height as f32 * self.world_post.scale)
+                .round()
+                .max(1.0);
+            projection.w_axis.x += 2.0 * jitter[0] / width;
+            projection.w_axis.y -= 2.0 * jitter[1] / height;
+        }
+        projection
     }
     /// The view frustum `render` will cull with, for culling geometry built
     /// before the frame (entities, block entities) the same way.
@@ -3034,6 +3175,112 @@ impl Renderer {
         let sun_angle = frame.sky.sun_angle.to_radians();
         // Celestial bodies rotate around the X axis; angle 0 = noon.
         let sun = Vec3::new(0.0, sun_angle.cos(), -sun_angle.sin());
+        let sun_clip = view_proj * sun.extend(0.0);
+        let sun_in_front = sun_clip.w > 0.0001 && sun.y > 0.0;
+        let sun_uv = if sun_in_front {
+            [
+                sun_clip.x / sun_clip.w * 0.5 + 0.5,
+                0.5 - sun_clip.y / sun_clip.w * 0.5,
+            ]
+        } else {
+            [0.5, 0.5]
+        };
+        let mut motion_uv = self.previous_camera_angles.map_or([0.0, 0.0], |previous| {
+            let delta_yaw = (frame.yaw - previous[0] + 180.0).rem_euclid(360.0) - 180.0;
+            let delta_pitch = frame.pitch - previous[1];
+            [-delta_yaw * 0.006, delta_pitch * 0.006]
+        });
+        self.previous_camera_angles = Some([frame.yaw, frame.pitch]);
+        let taa_active = self.world_post.makeup_enabled && self.world_post.temporal_aa_enabled;
+        let mut taa_jitter_data = [0.0; 4];
+        if taa_active {
+            let jitter = taa_jitter(self.taa_frame_index);
+            let previous = self.previous_taa_jitter.unwrap_or(jitter);
+            let width = (self.config.width as f32 * self.world_post.scale)
+                .round()
+                .max(1.0);
+            let height = (self.config.height as f32 * self.world_post.scale)
+                .round()
+                .max(1.0);
+            motion_uv[0] += (previous[0] - jitter[0]) / width;
+            motion_uv[1] += (previous[1] - jitter[1]) / height;
+            taa_jitter_data = [jitter[0], jitter[1], previous[0], previous[1]];
+            self.previous_taa_jitter = Some(jitter);
+        } else {
+            self.previous_taa_jitter = None;
+        }
+        let camera_rotation = view.inverse();
+        let vector4 = |axis: Vec3| {
+            let axis = camera_rotation.transform_vector3(axis);
+            [axis.x, axis.y, axis.z, 0.0]
+        };
+        let current_basis = [vector4(Vec3::X), vector4(Vec3::Y), vector4(Vec3::Z)]
+            .map(|axis| [axis[0], axis[1], axis[2]]);
+        let previous_basis = self.previous_camera_basis.unwrap_or(current_basis);
+        let previous_position = self.previous_camera_position.unwrap_or(frame.camera);
+        let camera_delta = (frame.camera - previous_position).as_vec3();
+        let tangent = (frame.fov_degrees.to_radians() * 0.5).tan();
+        let camera_right = Vec3::from_array(current_basis[0]);
+        let camera_up = Vec3::from_array(current_basis[1]);
+        // Approximate the depth-dependent translation vector at 16 blocks;
+        // the TAA path below uses exact position reprojection per pixel.
+        motion_uv[0] += camera_delta.dot(camera_right) / (32.0 * aspect * tangent);
+        motion_uv[1] -= camera_delta.dot(camera_up) / (32.0 * tangent);
+        let jitter_motion = [
+            (taa_jitter_data[2] - taa_jitter_data[0])
+                / (self.config.width as f32 * self.world_post.scale)
+                    .round()
+                    .max(1.0),
+            (taa_jitter_data[3] - taa_jitter_data[1])
+                / (self.config.height as f32 * self.world_post.scale)
+                    .round()
+                    .max(1.0),
+        ];
+        let motion_strength =
+            ((motion_uv[0] - jitter_motion[0]).hypot(motion_uv[1] - jitter_motion[1]) / 0.08)
+                .clamp(0.0, 1.0);
+        self.previous_camera_basis = Some(current_basis);
+        self.previous_camera_position = Some(frame.camera);
+        let basis4 = |axis: [f32; 3]| [axis[0], axis[1], axis[2], 0.0];
+        let cloud_origin_time = [
+            frame.camera.x.rem_euclid(65536.0) as f32,
+            frame.camera.y as f32,
+            frame.camera.z.rem_euclid(65536.0) as f32,
+            frame.shader_game_time * 24000.0,
+        ];
+        let cloud_params = [
+            (frame.fov_degrees.to_radians() * 0.5).tan(),
+            aspect,
+            f32::from(frame.underwater),
+            sun.y,
+        ];
+        self.world_post.set_environment(
+            &self.queue,
+            sun_uv,
+            sun_in_front
+                && (-0.25..=1.25).contains(&sun_uv[0])
+                && (-0.25..=1.25).contains(&sun_uv[1]),
+            if frame.skybox {
+                1.0
+            } else if frame.end_sky {
+                2.0
+            } else {
+                0.0
+            },
+            [sun.x, sun.y, sun.z, 0.0],
+            motion_uv,
+            motion_strength,
+            cloud_origin_time,
+            vector4(Vec3::X),
+            vector4(Vec3::Y),
+            vector4(Vec3::Z),
+            cloud_params,
+            basis4(previous_basis[0]),
+            basis4(previous_basis[1]),
+            basis4(previous_basis[2]),
+            [camera_delta.x, camera_delta.y, camera_delta.z, 0.0],
+            taa_jitter_data,
+        );
         let (fog_color, fog) = if let Some(f) = frame.fog {
             (
                 f.color,
@@ -3691,6 +3938,7 @@ impl Renderer {
         let pack_post = !frame.title && self.pack_post.as_ref().is_some_and(|p| p.1.is_some());
         let scaled = self.world_post.prepare(
             &self.device,
+            &self.queue,
             [self.config.width, self.config.height],
             pack_post,
         );
@@ -3731,7 +3979,10 @@ impl Renderer {
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(0.0),
                         // Phase 2 of occlusion culling draws over it; a shader pack reads it.
-                        store: if cull.is_some() || pack_post {
+                        store: if cull.is_some()
+                            || pack_post
+                            || self.world_post.makeup_effects_enabled()
+                        {
                             wgpu::StoreOp::Store
                         } else {
                             wgpu::StoreOp::Discard
@@ -3983,6 +4234,37 @@ impl Renderer {
                 );
             }
         }
+        if !frame.title
+            && let Some(mask) = self.world_post.water_mask_view()
+        {
+            let attachments = [Some(wgpu::RenderPassColorAttachment {
+                view: mask,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("MakeUp water surface mask"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: world_depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.makeup_water_mask_pipeline);
+            pass.set_bind_group(0, &self.group, &[]);
+            pass.set_bind_group(2, &self.makeup_water_group, &[]);
+            pass.set_vertex_buffer(1, self.instances.slice(..));
+            self.draw_sections(&mut pass, &self.indirect, 0, solid_draws, translucent_draws);
+        }
         if let Some((color, depth)) = &scaled
             && pack_post
             && let Some((_, Some(post))) = &mut self.pack_post
@@ -4171,6 +4453,10 @@ impl Renderer {
             self.first_frame = FirstFrame::Drawn;
         }
         let submission = crate::spans::time("submit", || self.queue.submit([commands]));
+        self.world_post.mark_taa_history_valid(&self.queue);
+        if taa_active {
+            self.taa_frame_index = self.taa_frame_index.wrapping_add(1);
+        }
         if let Some(cull) = &mut self.cull {
             cull.submitted();
         }
@@ -4346,6 +4632,22 @@ fn camera_section(camera: DVec3) -> SectionKey {
 
 fn world_projection(fov_degrees: f32, aspect: f32, far: f32) -> Mat4 {
     Mat4::perspective_rh(fov_degrees.to_radians(), aspect, far, 0.05)
+}
+
+fn taa_jitter(frame: u32) -> [f32; 2] {
+    let halton = |mut index: u32, base: u32| {
+        let reciprocal = 1.0 / base as f32;
+        let mut fraction = reciprocal;
+        let mut value = 0.0;
+        while index > 0 {
+            value += (index % base) as f32 * fraction;
+            index /= base;
+            fraction *= reciprocal;
+        }
+        value
+    };
+    let index = frame % 8 + 1;
+    [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
 }
 
 /// Where a perspective `view_proj` sees from, in its own (camera-relative)

@@ -970,7 +970,8 @@ enum Act {
     /// Credits & Attribution's Credits button (WinScreen without the poem).
     Credits,
     CopyAgentDetails,
-    ShaderPack(Option<String>),
+    SelectShader(ShaderChoice),
+    ApplyShader,
     OpenShaderFolder,
 }
 enum WKind {
@@ -1029,6 +1030,12 @@ pub enum Event {
     ShaderPack(Option<String>),
     OpenShaderFolder,
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShaderChoice {
+    Off,
+    MakeUp,
+    Pack(String),
+}
 /// `SliderableValueSet.applyValueImmediately`: these apply 600 ms after
 /// the last change (`OptionInstanceSliderButton.delayedApplyAt`).
 fn delays_apply(opt: Opt) -> bool {
@@ -1085,6 +1092,8 @@ pub struct OptionsUi {
     pub shader_packs: Vec<(String, Option<String>)>,
     /// The shader pack that runs.
     pub shader_pack: Option<String>,
+    /// Shader choice highlighted on the Shader page, staged until Apply.
+    pub shader_selection: ShaderChoice,
 }
 impl Default for OptionsUi {
     fn default() -> Self {
@@ -1116,6 +1125,7 @@ impl Default for OptionsUi {
             agent_status: Vec::new(),
             shader_packs: Vec::new(),
             shader_pack: None,
+            shader_selection: ShaderChoice::Off,
         }
     }
 }
@@ -1173,7 +1183,7 @@ fn horizon_page_tooltip(page: Page) -> Option<&'static str> {
         }
         Page::Agent => "Let your own AI agent play: horizon-ctl and MCP clients on this computer.",
         Page::ShaderPacks => {
-            "Shader packs in the Iris and OptiFine format, from the shaderpacks folder."
+            "Choose a shader, then apply it. Includes MakeUp Ultra Fast and compatible shader packs."
         }
         Page::Mods => {
             "Mods made for Horizon, from the horizon-mods folder. Each runs in a sandbox and stays off until you turn it on."
@@ -1273,7 +1283,7 @@ impl OptionsUi {
             Page::Credits => "credits_and_attribution.screen.title",
             Page::Horizon => "Horizon Settings",
             Page::Agent => "AI Agent",
-            Page::ShaderPacks => "Shader Packs",
+            Page::ShaderPacks => "Shaders",
         }
     }
     fn scrollbar_x(&self, width: f32) -> f32 {
@@ -1390,7 +1400,7 @@ impl OptionsUi {
                         open("Extras...", Page::Extras),
                         Some(open("Mods...", Page::Mods)),
                     ),
-                    Row::Buttons(open("Shader Packs...", Page::ShaderPacks), None),
+                    Row::Buttons(open("Shaders...", Page::ShaderPacks), None),
                     // No AI hides the AI Agent page and everything AI.
                     if s.extras.no_ai {
                         Row::Buttons(self.extra_button(s, crate::extras::Item::NoAi), None)
@@ -1403,27 +1413,63 @@ impl OptionsUi {
                 ]
             }
             Page::ShaderPacks => {
-                // Iris's shader pack list, in vanilla's widgets: one button a pack, two to a row, the one
-                // that runs marked as vanilla marks a selected entry; Off and the folder below them.
-                let pack = |(name, problem): &(String, Option<String>)| {
-                    let label = if self.shader_pack.as_ref() == Some(name) {
-                        format!("> {name} <")
+                let current = if s.horizon.makeup_visuals {
+                    ShaderChoice::MakeUp
+                } else {
+                    self.shader_pack
+                        .clone()
+                        .map_or(ShaderChoice::Off, ShaderChoice::Pack)
+                };
+                let selected = &self.shader_selection;
+                let active_name = match &current {
+                    ShaderChoice::Off => "Off".to_owned(),
+                    ShaderChoice::MakeUp => "MakeUp - Ultra Fast".to_owned(),
+                    ShaderChoice::Pack(name) => name.clone(),
+                };
+                let mark = |choice: &ShaderChoice, name: &str| {
+                    if selected == choice {
+                        format!("> {name} < (selected)")
                     } else {
-                        name.clone()
-                    };
+                        name.to_owned()
+                    }
+                };
+                // Selection only stages a choice. The separate Apply button below
+                // changes the active shader, matching the pack selection flow users expect.
+                let makeup = button(
+                    0.0,
+                    0.0,
+                    150.0,
+                    Text::literal(mark(&ShaderChoice::MakeUp, "MakeUp - Ultra Fast")),
+                    Act::SelectShader(ShaderChoice::MakeUp),
+                );
+                let pack = |(name, problem): &(String, Option<String>)| {
+                    let choice = ShaderChoice::Pack(name.clone());
+                    let label = mark(&choice, name);
                     let b = button(
                         0.0,
                         0.0,
                         150.0,
                         Text::literal(&label),
-                        Act::ShaderPack(Some(name.clone())),
+                        Act::SelectShader(choice),
                     );
                     if problem.is_some() { inactive(b) } else { b }
                 };
                 let mut rows = vec![Row::Note(
-                    "Their composite and final passes run over Horizon's world; more of each pack every update."
-                        .into(),
+                    format!(
+                        "Active shader: {active_name}. Select a shader, then press Apply to switch."
+                    )
+                    .into(),
                 )];
+                rows.push(Row::Buttons(
+                    makeup,
+                    Some(button(
+                        0.0,
+                        0.0,
+                        150.0,
+                        Text::literal(mark(&ShaderChoice::Off, "Off")),
+                        Act::SelectShader(ShaderChoice::Off),
+                    )),
+                ));
                 if self.shader_packs.is_empty() {
                     rows.push(Row::Note(
                         "No shader packs yet: put a pack's .zip in the shaderpacks folder.".into(),
@@ -1432,19 +1478,20 @@ impl OptionsUi {
                 for two in self.shader_packs.chunks(2) {
                     rows.push(Row::Buttons(pack(&two[0]), two.get(1).map(pack)));
                 }
-                let off = button(
-                    0.0,
-                    0.0,
-                    150.0,
-                    Text::literal(if self.shader_pack.is_none() {
-                        "> Off <"
-                    } else {
-                        "Off"
-                    }),
-                    Act::ShaderPack(None),
-                );
+                let selected_is_active = selected == &current;
+                let apply_label = if selected_is_active {
+                    "Disable selected shader"
+                } else {
+                    "Apply selected shader"
+                };
                 rows.push(Row::Buttons(
-                    off,
+                    button(
+                        0.0,
+                        0.0,
+                        150.0,
+                        Text::literal(apply_label),
+                        Act::ApplyShader,
+                    ),
                     Some(button(
                         0.0,
                         0.0,
@@ -2660,7 +2707,34 @@ impl OptionsUi {
                         Act::OpenModFolder => events.push(Event::OpenModFolder),
                         Act::Credits => events.push(Event::Credits),
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
-                        Act::ShaderPack(pack) => events.push(Event::ShaderPack(pack)),
+                        Act::SelectShader(choice) => self.shader_selection = choice,
+                        Act::ApplyShader => {
+                            let choice = if self.shader_selection == ShaderChoice::MakeUp
+                                && s.horizon.makeup_visuals
+                                || matches!(&self.shader_selection, ShaderChoice::Pack(name) if !s.horizon.makeup_visuals && self.shader_pack.as_ref() == Some(name))
+                            {
+                                ShaderChoice::Off
+                            } else {
+                                self.shader_selection.clone()
+                            };
+                            match choice {
+                                ShaderChoice::MakeUp => {
+                                    s.horizon.makeup_visuals = true;
+                                    events.push(Event::Changed);
+                                    events.push(Event::ShaderPack(None));
+                                }
+                                ShaderChoice::Off => {
+                                    s.horizon.makeup_visuals = false;
+                                    events.push(Event::Changed);
+                                    events.push(Event::ShaderPack(None));
+                                }
+                                ShaderChoice::Pack(name) => {
+                                    s.horizon.makeup_visuals = false;
+                                    events.push(Event::Changed);
+                                    events.push(Event::ShaderPack(Some(name)));
+                                }
+                            }
+                        }
                         Act::OpenShaderFolder => events.push(Event::OpenShaderFolder),
                         Act::None => {}
                     }
@@ -4261,7 +4335,7 @@ mod tests {
             } => Some(label.plain()),
             _ => None,
         });
-        assert_eq!(opens.as_deref(), Some("Shader Packs..."));
+        assert_eq!(opens.as_deref(), Some("Shaders..."));
         ui.push(Page::ShaderPacks);
         ui.shader_packs = vec![
             ("BSL.zip".into(), None),
@@ -4269,6 +4343,7 @@ mod tests {
             ("Complementary.zip".into(), None),
         ];
         ui.shader_pack = Some("Complementary.zip".into());
+        ui.shader_selection = ShaderChoice::Pack("Complementary.zip".into());
         let (widgets, _, _, _) = ui.layout(&s, 427.0, 240.0);
         let buttons: Vec<(String, bool, &Act)> = widgets
             .iter()
@@ -4280,20 +4355,27 @@ mod tests {
         let find = |name: &str| buttons.iter().find(|b| b.0 == name).cloned();
         assert_eq!(
             find("BSL.zip").map(|b| (b.1, b.2.clone())),
-            Some((true, Act::ShaderPack(Some("BSL.zip".into()))))
+            Some((
+                true,
+                Act::SelectShader(ShaderChoice::Pack("BSL.zip".into()))
+            ))
         );
         // A pack that can't be used can't be chosen.
         assert_eq!(find("Broken.zip").map(|b| b.1), Some(false));
-        assert!(find("> Complementary.zip <").is_some());
+        assert!(find("> Complementary.zip < (selected)").is_some());
         assert_eq!(
-            find("Off").map(|b| b.2.clone()),
-            Some(Act::ShaderPack(None))
+            find("MakeUp - Ultra Fast").map(|b| b.2.clone()),
+            Some(Act::SelectShader(ShaderChoice::MakeUp))
+        );
+        assert_eq!(
+            find("Disable selected shader").map(|b| b.2.clone()),
+            Some(Act::ApplyShader)
         );
         assert_eq!(
             find("Open Shader Pack Folder").map(|b| b.2.clone()),
             Some(Act::OpenShaderFolder)
         );
-        // Choosing one and opening the folder become the game's events, as does opening the page.
+        // Selecting a shader is staged; only Apply changes graphics settings and emits an event.
         let atlas = atlas();
         let mut s = Settings::default();
         let size = (480.0, 480.0);
@@ -4316,12 +4398,14 @@ mod tests {
                 false,
             )
         };
-        for (act, event) in [
-            (Act::ShaderPack(None), Event::ShaderPack(None)),
-            (Act::OpenShaderFolder, Event::OpenShaderFolder),
-        ] {
-            assert!(click(&mut ui, &mut s, act).contains(&event));
-        }
+        let selected = click(&mut ui, &mut s, Act::SelectShader(ShaderChoice::MakeUp));
+        assert_eq!(selected, vec![Event::ButtonClick]);
+        assert!(!s.horizon.makeup_visuals);
+        let apply_events = click(&mut ui, &mut s, Act::ApplyShader);
+        assert!(s.horizon.makeup_visuals);
+        assert!(apply_events.contains(&Event::Changed));
+        assert!(apply_events.contains(&Event::ShaderPack(None)));
+        assert!(click(&mut ui, &mut s, Act::OpenShaderFolder).contains(&Event::OpenShaderFolder));
         ui.stack = vec![Page::Main, Page::Horizon];
         assert!(
             click(&mut ui, &mut s, Act::Push(Page::ShaderPacks)).contains(&Event::ShaderPacksShown)

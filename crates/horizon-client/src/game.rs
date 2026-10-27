@@ -12749,6 +12749,18 @@ fn build_renderer(
         previous,
         api,
     ))?;
+    let water_layer = |wanted: &str| {
+        pack.layer_names
+            .iter()
+            .find_map(|(id, name)| (name == wanted).then_some(*id))
+            .unwrap_or(u32::MAX)
+    };
+    renderer.set_makeup_water_layers([
+        water_layer("block/water_still"),
+        water_layer("block/water_flow"),
+        water_layer("block/water_overlay"),
+        u32::MAX,
+    ]);
     renderer.hud.fire_animations = atlas
         .fire_animations
         .iter()
